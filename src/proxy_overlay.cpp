@@ -124,11 +124,12 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
 
-        // 4. Anti-Stutter CPU Governor
-        char schedBuf[140];
+        // 4. Dynamic CPU Governor (8ms Threshold)
+        char schedBuf[160];
         if (g_cfg.hybrid_governor) {
-            sprintf_s(schedBuf, "• CPU Governor: [ACTIVE] (P-Cores: 0x%03llX | E-Cores: 0x%04llX | Pinned: %ld)",
-                      (unsigned long long)g_tel.p_core_mask, (unsigned long long)g_tel.e_core_mask, g_tel.heavy_threads_pinned);
+            sprintf_s(schedBuf, "• CPU Governor: [ACTIVE] 16T (P-Cores: %ld hilos <=%dms | E-Cores: %ld hilos >%dms)",
+                      g_tel.heavy_threads_pinned, g_cfg.ecore_threshold_ms,
+                      g_tel.ecore_threads_active, g_cfg.ecore_threshold_ms);
             SetTextColor(hdc, RGB(70, 240, 140));
         } else {
             sprintf_s(schedBuf, "• CPU Governor: [DISABLED by INI]");

@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.3.1"
+#define PROXY_VERSION "3.4"
 
 enum component_status
 {
@@ -24,6 +24,7 @@ struct proxy_config
     int oom_guard_max;
     int compute_offload;
     int hybrid_governor;
+    int ecore_threshold_ms;
 };
 
 struct proxy_telemetry
@@ -73,8 +74,10 @@ struct proxy_telemetry
 
     // Scheduler & Thread Governor Telemetry
     volatile LONG heavy_threads_pinned;
+    volatile LONG ecore_threads_active;
     DWORD_PTR p_core_mask;
     DWORD_PTR e_core_mask;
+    DWORD_PTR all_cores_mask;
 
     int st_overlay;
 };

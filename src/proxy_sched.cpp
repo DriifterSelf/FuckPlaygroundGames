@@ -7,7 +7,34 @@
 
 static DWORD_PTR s_p_core_mask = 0;
 static DWORD_PTR s_e_core_mask = 0;
+static DWORD_PTR s_all_cores_mask = 0;
 static volatile BOOL s_governor_running = FALSE;
+
+#define MAX_TRACKED_THREADS 256
+struct ThreadSample {
+    DWORD tid;
+    ULONGLONG last_total_time;
+    DWORD last_tick;
+    float last_frame_work_ms;
+};
+
+static ThreadSample s_tracker[MAX_TRACKED_THREADS] = {};
+static int s_tracker_count = 0;
+
+static ThreadSample* FindOrCreateSample(DWORD tid) {
+    for (int i = 0; i < s_tracker_count; i++) {
+        if (s_tracker[i].tid == tid) return &s_tracker[i];
+    }
+    if (s_tracker_count < MAX_TRACKED_THREADS) {
+        ThreadSample* s = &s_tracker[s_tracker_count++];
+        s->tid = tid;
+        s->last_total_time = 0;
+        s->last_tick = GetTickCount();
+        s->last_frame_work_ms = 0.0f;
+        return s;
+    }
+    return NULL;
+}
 
 // Detects P-cores vs E-cores on Intel hybrid architecture
 static void DetectHybridTopology() {
@@ -62,15 +89,21 @@ static void DetectHybridTopology() {
 
         s_p_core_mask = pMask;
         s_e_core_mask = eMask;
+        s_all_cores_mask = pMask | eMask;
         g_tel.p_core_mask = pMask;
         g_tel.e_core_mask = eMask;
-        log_msg("[SCHED] Hybrid CPU topology detected: P-Cores Mask=0x%llX, E-Cores Mask=0x%llX",
-                (unsigned long long)s_p_core_mask, (unsigned long long)s_e_core_mask);
+        g_tel.all_cores_mask = s_all_cores_mask;
+        log_msg("[SCHED] Hybrid CPU topology detected: P-Cores=0x%llX, E-Cores=0x%llX, AllCores=0x%llX (ECoreThreshold=%dms)",
+                (unsigned long long)s_p_core_mask, (unsigned long long)s_e_core_mask,
+                (unsigned long long)s_all_cores_mask, g_cfg.ecore_threshold_ms);
     }
     free(buffer);
 }
 
-// Background governor thread that ensures heavy game worker threads are never choked on E-cores
+// Dynamic Anti-Stutter Governor Thread:
+// 1. Keeps process affinity mask at 0xFFFF to utilize all 16 cores
+// 2. Pins frame-critical interactive threads (<= 8ms) to P-Cores to prevent convoy stall
+// 3. Allows sustained heavy / background threads (> 8ms) to offload onto E-Cores for full parallel power
 static DWORD WINAPI GovernorThread(LPVOID) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
 
@@ -78,31 +111,80 @@ static DWORD WINAPI GovernorThread(LPVOID) {
 
     while (s_governor_running) {
         if (s_p_core_mask != 0 && g_cfg.hybrid_governor) {
+            // Ensure process has all 16 cores enabled (never starved of CPU power)
+            if (s_all_cores_mask != 0) {
+                DWORD_PTR curAff = 0, sysAff = 0;
+                GetProcessAffinityMask(GetCurrentProcess(), &curAff, &sysAff);
+                if ((curAff & s_all_cores_mask) != s_all_cores_mask) {
+                    SetProcessAffinityMask(GetCurrentProcess(), s_all_cores_mask);
+                }
+            }
+
             HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
             if (hSnap != INVALID_HANDLE_VALUE) {
                 THREADENTRY32 te;
                 te.dwSize = sizeof(THREADENTRY32);
-                LONG pinnedCount = 0;
+                LONG pCorePinned = 0;
+                LONG eCoreActive = 0;
+
                 if (Thread32First(hSnap, &te)) {
                     do {
                         if (te.th32OwnerProcessID == pid && te.th32ThreadID != GetCurrentThreadId()) {
-                            // Target high-priority worker and render threads (tpBasePri >= 1)
-                            if (te.tpBasePri >= 1) {
-                                HANDLE hThread = OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
-                                if (hThread) {
-                                    SetThreadAffinityMask(hThread, s_p_core_mask);
-                                    CloseHandle(hThread);
-                                    pinnedCount++;
+                            HANDLE hThread = OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+                            if (hThread) {
+                                FILETIME cr, ex, kernel, user;
+                                float frameWorkMs = 0.0f;
+
+                                if (GetThreadTimes(hThread, &cr, &ex, &kernel, &user)) {
+                                    ULARGE_INTEGER k, u;
+                                    k.LowPart = kernel.dwLowDateTime; k.HighPart = kernel.dwHighDateTime;
+                                    u.LowPart = user.dwLowDateTime;   u.HighPart = user.dwHighDateTime;
+                                    ULONGLONG total = k.QuadPart + u.QuadPart;
+                                    DWORD now = GetTickCount();
+
+                                    ThreadSample* sample = FindOrCreateSample(te.th32ThreadID);
+                                    if (sample && sample->last_total_time > 0) {
+                                        DWORD elapsed = now - sample->last_tick;
+                                        if (elapsed > 0 && total >= sample->last_total_time) {
+                                            float deltaMs = (float)(total - sample->last_total_time) / 10000.0f;
+                                            frameWorkMs = (deltaMs / (float)elapsed) * 16.67f;
+                                            sample->last_frame_work_ms = frameWorkMs;
+                                        }
+                                    }
+                                    if (sample) {
+                                        sample->last_total_time = total;
+                                        sample->last_tick = now;
+                                    }
                                 }
+
+                                // DYNAMIC SCHEDULING RULE:
+                                // If thread is sustained work > ECoreThresholdMs (8ms) or BelowNormal background priority:
+                                // -> Unleash to all cores including E-Cores (0xFFFF) so E-Cores assist without blocking P-Cores.
+                                // Else if thread is frame-critical worker / render (tpBasePri >= 1 and <= 8ms):
+                                // -> Anchor strictly to P-Cores (0x0FFF) to eliminate convoy delay.
+                                if (frameWorkMs > (float)g_cfg.ecore_threshold_ms || te.tpBasePri <= 0) {
+                                    SetThreadAffinityMask(hThread, s_all_cores_mask);
+                                    eCoreActive++;
+                                } else if (te.tpBasePri >= 1) {
+                                    SetThreadAffinityMask(hThread, s_p_core_mask);
+                                    pCorePinned++;
+                                } else {
+                                    SetThreadAffinityMask(hThread, s_all_cores_mask);
+                                    eCoreActive++;
+                                }
+
+                                CloseHandle(hThread);
                             }
                         }
                     } while (Thread32Next(hSnap, &te));
                 }
-                g_tel.heavy_threads_pinned = pinnedCount;
+
+                g_tel.heavy_threads_pinned = pCorePinned;
+                g_tel.ecore_threads_active = eCoreActive;
                 CloseHandle(hSnap);
             }
         }
-        Sleep(1000); // Check every 1 second
+        Sleep(500); // Dynamic evaluation every 500 ms
     }
     return 0;
 }
