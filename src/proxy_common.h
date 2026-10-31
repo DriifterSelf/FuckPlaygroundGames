@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.1"
+#define PROXY_VERSION "3.2"
 
 enum component_status
 {
@@ -22,6 +22,8 @@ struct proxy_config
     int vram_margin_percent;
     int oom_guard;
     int oom_guard_max;
+    int compute_offload;
+    int hybrid_governor;
 };
 
 struct proxy_telemetry
@@ -74,3 +76,6 @@ void identify_game();
 void vram_hook_install();
 void guard_install();
 void overlay_start();
+struct ID3D12Device;
+void dx12_hook_install(struct ID3D12Device* pDevice);
+void sched_governor_start();

@@ -127,6 +127,10 @@ extern "C" __declspec(dllexport) int agsDriverExtensionsDX12_CreateDevice(
     g_tel.st_dx12 = (res == 0 ? st_ok : st_fail);
 
     if (res == 0 && returnedParams != NULL) {
+        ID3D12Device* pDevice = *(ID3D12Device**)returnedParams;
+        if (pDevice) {
+            dx12_hook_install(pDevice);
+        }
         uint32_t* pExt = (uint32_t*)((uint8_t*)returnedParams + sizeof(void*));
         g_tel.ext_bits = *pExt;
         log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice result: 0 | Driver Extension Bits: 0x%08X", g_tel.ext_bits);
@@ -143,9 +147,9 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
         open_log_and_config();
         identify_game();
         guard_install();
+        sched_governor_start();
         overlay_start();
 
-        // Note: CPU affinity is intentionally untouched.
         // VRAM hook is initialized when overlay thread starts or when agsInitialize is called.
     } else if (reason == DLL_PROCESS_DETACH) {
         log_msg("[PROXY] Proxy detaching from process.");

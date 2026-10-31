@@ -25,6 +25,8 @@ cl /LD /O2 /W3 /std:c++20 /Isrc ^
     src\proxy_log.cpp ^
     src\proxy_vram.cpp ^
     src\proxy_guard.cpp ^
+    src\proxy_dx12.cpp ^
+    src\proxy_sched.cpp ^
     src\proxy_overlay.cpp ^
     dxgi.lib user32.lib gdi32.lib ^
     /Fe:bin\amd_ags_x64.dll ^
