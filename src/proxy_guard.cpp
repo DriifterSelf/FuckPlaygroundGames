@@ -88,17 +88,6 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }
-
-                // CASE 3: Generic NULL pointer read within game image during resource streaming
-                if (isWrite == 0 && faultAddr < 0x100) {
-                    // Check if RIP points to a 64-bit load instruction: mov reg64, [null_reg + disp]
-                    // 48 8B ...
-                    if (rip[0] == 0x48 && rip[1] == 0x8B) {
-                        LONG hit = InterlockedIncrement(&g_tel.guard_hits);
-                        log_msg("[GUARD] Detected NULL-pointer load at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX).",
-                                rip, rva, faultAddr);
-                    }
-                }
             }
             __except (EXCEPTION_EXECUTE_HANDLER) {
             }

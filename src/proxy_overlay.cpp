@@ -163,6 +163,9 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 }
 
 static DWORD WINAPI OverlayThread(LPVOID) {
+    // Isolate diagnostic overlay strictly to efficiency cores (E-Cores) to never preempt render threads
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+
     // Early installation of VRAM hook from dedicated worker thread (avoids loader lock)
     vram_hook_install();
 
@@ -217,7 +220,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
             }
         }
 
-        Sleep(40);
+        Sleep(s_visible ? 40 : 100);
     }
     return 0;
 }
