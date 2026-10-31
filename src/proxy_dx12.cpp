@@ -108,6 +108,24 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             // where near > far to reject 100% of lighting volumes and black out the scene.
             break;
         }
+        case D3D12_FEATURE_COMMAND_QUEUE_PRIORITY: {
+            // Feature 20: Realtime Async Compute Queue for Hardware Audio Simulation & Ray Tracing
+            // Enables the engine (ForzaTech/Wwise) to dispatch low-latency sound propagation,
+            // acoustic impulse response, and sound raytracing directly to GPU compute queues.
+            D3D12_FEATURE_DATA_COMMAND_QUEUE_PRIORITY* cqp = (D3D12_FEATURE_DATA_COMMAND_QUEUE_PRIORITY*)pFeatureSupportData;
+            if (cqp->CommandListType == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
+                cqp->PriorityForTypeIsSupported = TRUE;
+                g_tel.d3d12_audio_compute = 1;
+                InterlockedIncrement(&g_tel.d3d12_audio_queries);
+                if (!(s_injected_logged_mask & (1ULL << 20))) {
+                    s_injected_logged_mask |= (1ULL << 20);
+                    log_msg("[DX12] [INJECT] Enabled High/Realtime Priority Compute Queue (Hardware Audio Compute & Raytracing Offload)");
+                }
+            } else {
+                injected = false;
+            }
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS3: {
             // Feature 21: Enable Async Copy Queue timestamps and casting for fast texture streaming
             D3D12_FEATURE_DATA_D3D12_OPTIONS3* opt3 = (D3D12_FEATURE_DATA_D3D12_OPTIONS3*)pFeatureSupportData;
@@ -216,6 +234,44 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             if (!(s_injected_logged_mask & (1ULL << 45))) {
                 s_injected_logged_mask |= (1ULL << 45);
                 log_msg("[DX12] [INJECT] Enabled GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero CPU Staging Copies)");
+            }
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS19: {
+            // Feature 48: Compute-Only Custom Heaps for Audio Buffer & Acceleration Structures
+            D3D12_FEATURE_DATA_D3D12_OPTIONS19* opt19 = (D3D12_FEATURE_DATA_D3D12_OPTIONS19*)pFeatureSupportData;
+            opt19->ComputeOnlyCustomHeapSupported = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_PREDICATION: {
+            // Feature 50: Hardware Predication (Zero-CPU Occlusion Culling)
+            D3D12_FEATURE_DATA_PREDICATION* pred = (D3D12_FEATURE_DATA_PREDICATION*)pFeatureSupportData;
+            pred->Supported = TRUE;
+            g_tel.d3d12_predication = 1;
+            if (!(s_injected_logged_mask & (1ULL << 50))) {
+                s_injected_logged_mask |= (1ULL << 50);
+                log_msg("[DX12] [INJECT] Enabled Hardware Predication (Zero-CPU GPU Occlusion Culling)");
+            }
+            break;
+        }
+        case D3D12_FEATURE_HARDWARE_COPY: {
+            // Feature 51: Dedicated DMA Hardware Copy
+            D3D12_FEATURE_DATA_HARDWARE_COPY* hwcopy = (D3D12_FEATURE_DATA_HARDWARE_COPY*)pFeatureSupportData;
+            hwcopy->Supported = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS21: {
+            // Feature 53: Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 (GPU-Driven Execution)
+            D3D12_FEATURE_DATA_D3D12_OPTIONS21* opt21 = (D3D12_FEATURE_DATA_D3D12_OPTIONS21*)pFeatureSupportData;
+            opt21->WorkGraphsTier = D3D12_WORK_GRAPHS_TIER_1_0;
+            opt21->ExecuteIndirectTier = D3D12_EXECUTE_INDIRECT_TIER_1_1;
+            opt21->SampleCmpGradientAndBiasSupported = TRUE;
+            opt21->ExtendedCommandInfoSupported = TRUE;
+            g_tel.d3d12_work_graphs = 1;
+            g_tel.d3d12_execute_indirect_1_1 = 1;
+            if (!(s_injected_logged_mask & (1ULL << 53))) {
+                s_injected_logged_mask |= (1ULL << 53);
+                log_msg("[DX12] [INJECT] Enabled Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 (GPU-Driven Pipeline)");
             }
             break;
         }
