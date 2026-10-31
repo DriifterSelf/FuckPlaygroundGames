@@ -109,6 +109,13 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             log_msg("[DX12] [INJECT] Enabled Async Copy Queue & Typed Format Casting");
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS4: {
+            // Feature 23: Native 16-bit Float and Int operations (2x math rate on RDNA4 Compute Units)
+            D3D12_FEATURE_DATA_D3D12_OPTIONS4* opt4 = (D3D12_FEATURE_DATA_D3D12_OPTIONS4*)pFeatureSupportData;
+            opt4->Native16BitShaderOpsSupported = TRUE;
+            log_msg("[DX12] [INJECT] Enabled Native 16-bit Float/Int Shader Ops (2x Math Rate on RDNA4)");
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
             // Force Raytracing Tier 1.1 support for Inline Raytracing (RayQuery in Compute Shaders)
             D3D12_FEATURE_DATA_D3D12_OPTIONS5* opt5 = (D3D12_FEATURE_DATA_D3D12_OPTIONS5*)pFeatureSupportData;
@@ -121,17 +128,26 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
-            // Enable Mesh Shader Tier 1 for GPU cluster culling
+            // Feature 32: Mesh Shader Tier 1 (GPU cluster culling) & Sampler Feedback Tier 1.0 (Hardware Streaming Min-Map)
             D3D12_FEATURE_DATA_D3D12_OPTIONS7* opt7 = (D3D12_FEATURE_DATA_D3D12_OPTIONS7*)pFeatureSupportData;
             if (opt7->MeshShaderTier < D3D12_MESH_SHADER_TIER_1) {
                 opt7->MeshShaderTier = D3D12_MESH_SHADER_TIER_1;
             }
+            opt7->SamplerFeedbackTier = D3D12_SAMPLER_FEEDBACK_TIER_1_0;
             g_tel.d3d12_mesh_shader = 1;
-            log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 (GPU Cluster Culling)");
+            g_tel.d3d12_sampler_feedback = 1;
+            log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 & Sampler Feedback Tier 1.0 (Zero CPU Texture LOD Distance Math)");
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS8: {
+            // Feature 36: Unaligned Block Textures
+            D3D12_FEATURE_DATA_D3D12_OPTIONS8* opt8 = (D3D12_FEATURE_DATA_D3D12_OPTIONS8*)pFeatureSupportData;
+            opt8->UnalignedBlockTexturesSupported = TRUE;
+            log_msg("[DX12] [INJECT] Enabled Unaligned Block Textures Support");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS9: {
-            // Feature 34: 64-bit GPU Atomics, Mesh Derivatives, and WaveMMA
+            // Feature 37: 64-bit GPU Atomics, Mesh Derivatives, and WaveMMA
             D3D12_FEATURE_DATA_D3D12_OPTIONS9* opt9 = (D3D12_FEATURE_DATA_D3D12_OPTIONS9*)pFeatureSupportData;
             opt9->MeshShaderPipelineStatsSupported = TRUE;
             opt9->MeshShaderSupportsFullRangeRenderTargetArrayIndex = TRUE;
@@ -143,13 +159,66 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics, WaveMMA, and Mesh Derivatives");
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS11: {
+            // Feature 40: 64-bit GPU Atomics on Descriptor Heap Resources
+            D3D12_FEATURE_DATA_D3D12_OPTIONS11* opt11 = (D3D12_FEATURE_DATA_D3D12_OPTIONS11*)pFeatureSupportData;
+            opt11->AtomicInt64OnDescriptorHeapResourceSupported = TRUE;
+            log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics on Descriptor Heap Resources");
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS12: {
-            // Feature 40: Enhanced Barriers (Direct hardware layout transitions without CPU tracking)
+            // Feature 41: Enhanced Barriers (Direct hardware layout transitions without CPU tracking)
             D3D12_FEATURE_DATA_D3D12_OPTIONS12* opt12 = (D3D12_FEATURE_DATA_D3D12_OPTIONS12*)pFeatureSupportData;
             opt12->EnhancedBarriersSupported = TRUE;
             opt12->RelaxedFormatCastingSupported = TRUE;
             g_tel.d3d12_enhanced_barriers = 1;
             log_msg("[DX12] [INJECT] Enabled Enhanced Barriers (Zero CPU Barrier Tracking)");
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS13: {
+            // Feature 42: Unrestricted Vertex & Buffer Alignment
+            D3D12_FEATURE_DATA_D3D12_OPTIONS13* opt13 = (D3D12_FEATURE_DATA_D3D12_OPTIONS13*)pFeatureSupportData;
+            opt13->UnrestrictedBufferTextureCopyPitchSupported = TRUE;
+            opt13->UnrestrictedVertexElementAlignmentSupported = TRUE;
+            opt13->InvertedViewportHeightFlipsYSupported = TRUE;
+            opt13->InvertedViewportDepthFlipsZSupported = TRUE;
+            opt13->TextureCopyBetweenDimensionsSupported = TRUE;
+            opt13->AlphaBlendFactorSupported = TRUE;
+            log_msg("[DX12] [INJECT] Enabled Unrestricted Vertex/Texture Alignment (Zero CPU Re-packing)");
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS16: {
+            // Feature 47: GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero Staging Copies)
+            D3D12_FEATURE_DATA_D3D12_OPTIONS16* opt16 = (D3D12_FEATURE_DATA_D3D12_OPTIONS16*)pFeatureSupportData;
+            opt16->DynamicDepthBiasSupported = TRUE;
+            opt16->GPUUploadHeapSupported = TRUE;
+            g_tel.d3d12_gpu_upload_heap = 1;
+            log_msg("[DX12] [INJECT] Enabled GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero CPU Staging Memory Copies)");
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS21: {
+            // Feature 53: ExecuteIndirect Tier 1.1 & Work Graphs Tier 1.0 (Full GPU-Driven Pipeline)
+            D3D12_FEATURE_DATA_D3D12_OPTIONS21* opt21 = (D3D12_FEATURE_DATA_D3D12_OPTIONS21*)pFeatureSupportData;
+            opt21->WorkGraphsTier = D3D12_WORK_GRAPHS_TIER_1_0;
+            opt21->ExecuteIndirectTier = D3D12_EXECUTE_INDIRECT_TIER_1_1;
+            opt21->SampleCmpGradientAndBiasSupported = TRUE;
+            opt21->ExtendedCommandInfoSupported = TRUE;
+            g_tel.d3d12_execute_indirect_1_1 = 1;
+            g_tel.d3d12_work_graphs = 1;
+            log_msg("[DX12] [INJECT] Enabled ExecuteIndirect Tier 1.1 & Work Graphs Tier 1.0 (Full GPU-Driven Pipeline)");
+            break;
+        }
+        case D3D12_FEATURE_PREDICATION: {
+            D3D12_FEATURE_DATA_PREDICATION* pred = (D3D12_FEATURE_DATA_PREDICATION*)pFeatureSupportData;
+            pred->Supported = TRUE;
+            g_tel.d3d12_predication = 1;
+            log_msg("[DX12] [INJECT] Enabled Hardware GPU Predication (Direct Occlusion Drop in Pipeline)");
+            break;
+        }
+        case D3D12_FEATURE_HARDWARE_COPY: {
+            D3D12_FEATURE_DATA_HARDWARE_COPY* hwCopy = (D3D12_FEATURE_DATA_HARDWARE_COPY*)pFeatureSupportData;
+            hwCopy->Supported = TRUE;
+            log_msg("[DX12] [INJECT] Enabled Hardware Copy Queue Acceleration");
             break;
         }
         default:
@@ -243,7 +312,7 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
     // Default mapping (0, 1, 2, 3) -> Blue=0 -> pure NEON YELLOW (Red + Green).
     // Fix: Map Blue to Component 0 (Red) while keeping .xy intact for normal maps.
     else if (desc_copy.Format == DXGI_FORMAT_BC5_UNORM || 
-             desc_copy.Format == DXGI_FORMAT_BC5_SNORM ||
+             desc_copy.Format == DXGI_FORMAT_BC5_SNORM || 
              desc_copy.Format == DXGI_FORMAT_BC5_TYPELESS ||
              desc_copy.Format == DXGI_FORMAT_R8G8_UNORM ||
              desc_copy.Format == DXGI_FORMAT_R8G8_SNORM)

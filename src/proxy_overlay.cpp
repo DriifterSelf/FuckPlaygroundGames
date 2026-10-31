@@ -132,15 +132,31 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, mdiBuf, (int)strlen(mdiBuf));
         y += step;
 
-        // 3g. Async Copy Queue
+        // 3g. Async Copy Queue & GPU Predication
         char copyBuf[140];
-        sprintf_s(copyBuf, "  ├─ Async Copy Queue: %s (Direct Texture Streaming)",
-                  g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, g_tel.d3d12_async_copy ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(copyBuf, "  ├─ Async Copy & Predication: %s (DMA Queues & HW Occlusion Drop)",
+                  (g_tel.d3d12_async_copy || g_tel.d3d12_predication) ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, (g_tel.d3d12_async_copy || g_tel.d3d12_predication) ? RGB(70, 240, 140) : RGB(255, 205, 60));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
 
-        // 3h. Particle Swizzle Fix
+        // 3h. GPU-Driven Pipeline & Work Graphs
+        char gdpBuf[140];
+        sprintf_s(gdpBuf, "  ├─ GPU-Driven Pipeline: %s (ExecuteIndirect 1.1 & WorkGraphs)",
+                  (g_tel.d3d12_execute_indirect_1_1 || g_tel.d3d12_work_graphs) ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, (g_tel.d3d12_execute_indirect_1_1 || g_tel.d3d12_work_graphs) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, gdpBuf, (int)strlen(gdpBuf));
+        y += step;
+
+        // 3i. ReBAR GPU Upload Heaps & Streaming Feedback
+        char rebBuf[140];
+        sprintf_s(rebBuf, "  ├─ ReBAR VRAM & Feedback: %s (Direct Upload Heaps & SamplerFB)",
+                  (g_tel.d3d12_gpu_upload_heap || g_tel.d3d12_sampler_feedback) ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, (g_tel.d3d12_gpu_upload_heap || g_tel.d3d12_sampler_feedback) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, rebBuf, (int)strlen(rebBuf));
+        y += step;
+
+        // 3j. Particle Swizzle Fix
         char partBuf[140];
         sprintf_s(partBuf, "  └─ Particle Swizzle Fix: [ACTIVE] (%ld SRVs corregidos)", g_tel.d3d12_particle_fixes);
         SetTextColor(hdc, RGB(70, 240, 140));
@@ -233,7 +249,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 285,
+        25, 25, 580, 325,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
