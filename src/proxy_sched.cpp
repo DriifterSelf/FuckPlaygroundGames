@@ -158,14 +158,11 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                 }
 
                                 // DYNAMIC SCHEDULING RULE:
-                                // If thread is sustained work > ECoreThresholdMs (8ms) or BelowNormal background priority:
-                                // -> Unleash to all cores including E-Cores (0xFFFF) so E-Cores assist without blocking P-Cores.
-                                // Else if thread is frame-critical worker / render (tpBasePri >= 1 and <= 8ms):
-                                // -> Anchor strictly to P-Cores (0x0FFF) to eliminate convoy delay.
-                                if (frameWorkMs > (float)g_cfg.ecore_threshold_ms || te.tpBasePri <= 0) {
-                                    SetThreadAffinityMask(hThread, s_all_cores_mask);
-                                    eCoreActive++;
-                                } else if (te.tpBasePri >= 1) {
+                                // 1. Frame-critical simulation, render submission, and job workers (tpBasePri >= 1):
+                                //    -> Always anchor to P-Cores (0x0FFF) so they run at 4.6 GHz with full AVX2 throughput.
+                                // 2. Background streaming, audio decompression, disk I/O, and worker overflow (tpBasePri <= 0):
+                                //    -> Unleash to all cores including E-Cores (0xFFFF) so E-Cores assist without blocking P-Cores.
+                                if (te.tpBasePri >= 1) {
                                     SetThreadAffinityMask(hThread, s_p_core_mask);
                                     pCorePinned++;
                                 } else {

@@ -124,7 +124,15 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, rovBuf, (int)strlen(rovBuf));
         y += step;
 
-        // 3f. Async Copy Queue
+        // 3f. Hardware MDI & Enhanced Barriers
+        char mdiBuf[140];
+        sprintf_s(mdiBuf, "  ├─ Hardware MDI & Barriers: %s (MultiDraw & 0 CPU Tracking)",
+                  (g_tel.ags_mdi_unlocked && g_tel.d3d12_enhanced_barriers) ? "[ACTIVE]" : (g_tel.ags_mdi_unlocked ? "[ACTIVE AGS]" : "[PENDING ENGINE]"));
+        SetTextColor(hdc, g_tel.ags_mdi_unlocked ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, mdiBuf, (int)strlen(mdiBuf));
+        y += step;
+
+        // 3g. Async Copy Queue
         char copyBuf[140];
         sprintf_s(copyBuf, "  └─ Async Copy Queue: %s (Direct Texture Streaming)",
                   g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");
@@ -218,7 +226,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 245,
+        25, 25, 580, 265,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 

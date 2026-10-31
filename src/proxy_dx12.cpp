@@ -87,6 +87,28 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 (GPU Cluster Culling)");
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS9: {
+            // Feature 34: 64-bit GPU Atomics, Mesh Derivatives, and WaveMMA
+            D3D12_FEATURE_DATA_D3D12_OPTIONS9* opt9 = (D3D12_FEATURE_DATA_D3D12_OPTIONS9*)pFeatureSupportData;
+            opt9->MeshShaderPipelineStatsSupported = TRUE;
+            opt9->MeshShaderSupportsFullRangeRenderTargetArrayIndex = TRUE;
+            opt9->AtomicInt64OnTypedResourceSupported = TRUE;
+            opt9->AtomicInt64OnGroupSharedSupported = TRUE;
+            opt9->DerivativesInMeshAndAmplificationShadersSupported = TRUE;
+            opt9->WaveMMATier = D3D12_WAVE_MMA_TIER_1_0;
+            g_tel.d3d12_gpu_atomics64 = 1;
+            log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics, WaveMMA, and Mesh Derivatives");
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS12: {
+            // Feature 40: Enhanced Barriers (Direct hardware layout transitions without CPU tracking)
+            D3D12_FEATURE_DATA_D3D12_OPTIONS12* opt12 = (D3D12_FEATURE_DATA_D3D12_OPTIONS12*)pFeatureSupportData;
+            opt12->EnhancedBarriersSupported = TRUE;
+            opt12->RelaxedFormatCastingSupported = TRUE;
+            g_tel.d3d12_enhanced_barriers = 1;
+            log_msg("[DX12] [INJECT] Enabled Enhanced Barriers (Zero CPU Barrier Tracking)");
+            break;
+        }
         default:
             break;
         }

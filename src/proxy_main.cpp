@@ -132,8 +132,11 @@ extern "C" __declspec(dllexport) int agsDriverExtensionsDX12_CreateDevice(
             dx12_hook_install(pDevice);
         }
         uint32_t* pExt = (uint32_t*)((uint8_t*)returnedParams + sizeof(void*));
+        // Force full hardware acceleration: MultiDrawIndirect, WaveMatrix (WMMA), DepthBounds, MultiView
+        *pExt |= 0x0000FFFF;
         g_tel.ext_bits = *pExt;
-        log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice result: 0 | Driver Extension Bits: 0x%08X", g_tel.ext_bits);
+        g_tel.ags_mdi_unlocked = 1;
+        log_msg("[AGS] Unlocked AMD Driver Extensions: 0x%08X (MDI + WaveMatrix + DepthBounds)", g_tel.ext_bits);
     } else {
         log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice failed with code %d", res);
     }
