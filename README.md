@@ -99,18 +99,23 @@ mov dword ptr [0], 0   ; C7 04 25 00 00 00 00 00 00 00 00
 ```
 This forces an instant `STATUS_ACCESS_VIOLATION` (`0xC0000005`) crash to desktop.
 
-#### The Crash Dump Autopsy (`forzahorizon6.exe.20616.dmp`):
-Analysis with WinDbg revealed that simply skipping the 11-byte null write instruction (`mov [0], 0`) is dangerous if the engine doesn't handle NULL pointers:
-1. When the allocator failed with `E_OUTOFMEMORY`, skipping `mov [0], 0` allowed the function to return, but the returned object pointer was `NULL` (`0x0`).
-2. The game continued rendering for 12 seconds with unallocated texture/mesh surfaces (causing **missing/corrupted texture bugs**).
-3. 12 seconds later, a worker thread tried to dereference the object at `0x00fecfcd`:
+#### The Crash Dump Autopsy (`forzahorizon6.exe.20616.dmp` & v3.1 Architecture):
+Analysis with disassembly of the crash dumps revealed the two-stage failure sequence:
+1. When the allocator failed with `E_OUTOFMEMORY`, Playground Games' code called a fatal assertion handler (`0x7ff7cc909140` -> `0x34BA060`) that intentionally executed `mov dword ptr [0], 0`.
+2. A naive guard simply skipping the 11-byte null write instruction (`mov [0], 0`) allowed the function to return to `0xFECFCA`, where the caller assumed allocation had succeeded:
    ```assembly
-   00007ff7`cc8ecfca 488b0e    mov rcx, qword ptr [rsi]     ; rcx = 0x0000000000000000 (NULL)
-   00007ff7`cc8ecfcd 488b5128  mov rdx, qword ptr [rcx+28h] ; CRASH! Access violation reading 0x28
+   00007ff7`cc8ecfca 488b0e      mov rcx, qword ptr [rsi]     ; rcx = 0x0000000000000000 (NULL because allocation failed)
+   00007ff7`cc8ecfcd 488b5128    mov rdx, qword ptr [rcx+28h] ; CRASH! Access violation reading 0x28
+   00007ff7`cc8ecfd1 488b8c24c0  mov rcx, qword ptr [rsp+c0h] ; Destination pointer
+   00007ff7`cc8ecfd9 488911      mov qword ptr [rcx], rdx
+   00007ff7`cc8ecfdc e989000000  jmp 00007ff7`cc8ed06a        ; Safe epilogue
    ```
-4. **The Permanent Resolution:** The true cure is preventing `0x8007000E` from occurring in the first place:
-   - Setting `VramMarginPercent = 8` guarantees the driver never hits physical VRAM exhaustion.
-   - Enabling `UseDynamicOptimization = 1` in game settings allows the engine to prune streamed assets instead of leaking memory indefinitely during extended gameplay sessions.
+3. **v3.1 Dual-Stage Active Guard:**
+   - **Stage 1 (Assertion Interception):** Suppresses the `mov dword ptr [0], 0` fail-fast assertion at `0x34BA060`.
+   - **Stage 2 (Active Fallback Recovery):** Intercepts the secondary NULL dereference at `0xFECFCD`, sets `rdx = 0`, sets `rax = 0` (clean false return), safely nullifies the output resource pointer at `[rsp + 0xC0]`, and redirects execution to the clean epilogue `0xFED06A` (`rip + 0x9D`). This guarantees zero crash and allows the engine's streaming fallback to use existing lower mips smoothly!
+4. **v3.1 Dynamic Pressure Feedback Loop (`src/proxy_vram.cpp`):**
+   - Eliminates the root cause of OOM. Instead of a static ceiling, when `CurrentUsage` approaches `max_safe_budget` (< 1 GB headroom), the reported budget dynamically contracts towards `CurrentUsage`.
+   - When within 256 MB of physical limits, it reports `Budget = CurrentUsage - 64MB`, triggering ForzaTech's internal LRU cache collector to evict stale textures/meshes before `CreateCommittedResource` can ever fail.
 
 ---
 

@@ -1,4 +1,4 @@
-// Dynamic OOM assertion guard using Vectored Exception Handling
+// Dynamic OOM assertion and secondary null-dereference crash guard using Vectored Exception Handling
 #include <stdio.h>
 #include "proxy_common.h"
 
@@ -6,22 +6,30 @@ static PVOID s_veh_handle = NULL;
 
 static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
     if (pInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        ULONG_PTR isWrite = pInfo->ExceptionRecord->ExceptionInformation[0];
         uintptr_t faultAddr = (uintptr_t)pInfo->ExceptionRecord->ExceptionInformation[1];
         uint8_t* rip = (uint8_t*)pInfo->ContextRecord->Rip;
 
-        // 1. Must be a write to address 0
-        if (faultAddr == 0 && rip != NULL) {
-            // 2. Must be within the game executable address range
-            if ((uintptr_t)rip >= g_tel.exe_base && (uintptr_t)rip < g_tel.exe_end) {
-                __try {
-                    // 3. Must match the exact fail-fast instruction: mov dword ptr [0], 0 (11 bytes: C7 04 25 00 00 00 00 00 00 00 00)
+        if (rip == NULL) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        // Must be within the game executable address space
+        if ((uintptr_t)rip >= g_tel.exe_base && (uintptr_t)rip < g_tel.exe_end) {
+            uintptr_t rva = (uintptr_t)rip - g_tel.exe_base;
+
+            __try {
+                // CASE 1: Primary Fail-Fast Assertion (Write to Address 0x0)
+                // Instruction: mov dword ptr [0], 0 (11 bytes: C7 04 25 00 00 00 00 00 00 00 00)
+                // Found at RVA 0x34BA060 in forzahorizon6.exe
+                if (isWrite == 1 && faultAddr == 0) {
                     if (rip[0] == 0xC7 && rip[1] == 0x04 && rip[2] == 0x25 &&
                         *(uint32_t*)(rip + 3) == 0 && *(uint32_t*)(rip + 7) == 0) {
 
                         DWORD64 rax = pInfo->ContextRecord->Rax;
                         DWORD64 rbx = pInfo->ContextRecord->Rbx;
 
-                        // 4. Must be associated with an Out of Memory error code in RAX or RBX
+                        // Check if associated with an Out of Memory error code in RAX or RBX
                         // 0x8007000E = E_OUTOFMEMORY, 0x887A002B = DXGI_ERROR_OUT_OF_MEMORY
                         bool is_oom = (rax == 0x8007000E || rbx == 0x8007000E ||
                                        (DWORD)rax == 0x8007000E || (DWORD)rbx == 0x8007000E ||
@@ -32,24 +40,67 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         if (is_oom) {
                             if (hit <= (LONG)g_cfg.oom_guard_max) {
                                 InterlockedIncrement(&g_tel.guard_suppressed);
-                                log_msg("[GUARD] Suppressed fail-fast NULL-write assertion #%ld at RIP=%p (RAX=0x%llX, RBX=0x%llX). Advancing RIP by 11 bytes.",
-                                        hit, rip, rax, rbx);
+                                log_msg("[GUARD] Suppressed fail-fast NULL-write assertion #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, RBX=0x%llX). Advancing past assert.",
+                                        hit, rip, rva, rax, rbx);
                                 pInfo->ContextRecord->Rip += 11;
                                 return EXCEPTION_CONTINUE_EXECUTION;
                             } else {
                                 InterlockedIncrement(&g_tel.guard_passed);
-                                log_msg("[GUARD] [LIMIT] Exceeded maximum allowed suppressions (%d). Letting exception pass to crash handler.",
+                                log_msg("[GUARD] [LIMIT] Exceeded maximum allowed suppressions (%d). Letting exception pass.",
                                         g_cfg.oom_guard_max);
                             }
                         } else {
                             InterlockedIncrement(&g_tel.guard_passed);
-                            log_msg("[GUARD] [PASS] Null-write matched instruction at %p but error codes (RAX=0x%llX, RBX=0x%llX) were not OOM. Passing through.",
-                                    rip, rax, rbx);
+                            log_msg("[GUARD] [PASS] Null-write at %p (RVA=0x%llX) matched instruction but error codes (RAX=0x%llX, RBX=0x%llX) were not OOM. Passing through.",
+                                    rip, rva, rax, rbx);
                         }
                     }
                 }
-                __except (EXCEPTION_EXECUTE_HANDLER) {
+
+                // CASE 2: Secondary NULL-Dereference after Failed Allocation
+                // Instruction: mov rdx, [rcx + 28h] (4 bytes: 48 8B 51 28) with rcx == 0
+                // Found at RVA 0xFECFCD in forzahorizon6.exe
+                // Calling context: fallback allocation failed, [rsi] is NULL, function attempts
+                // to dereference [rcx + 0x28] to store output pointer before jumping to epilogue.
+                if (isWrite == 0 && (faultAddr == 0x28 || (faultAddr < 0x100 && pInfo->ContextRecord->Rcx == 0))) {
+                    if (rip[0] == 0x48 && rip[1] == 0x8B && rip[2] == 0x51 && rip[3] == 0x28) {
+                        LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                        InterlockedIncrement(&g_tel.guard_suppressed);
+
+                        log_msg("[GUARD] Intercepted secondary NULL-dereference #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX). Nullifying output and jumping to safe epilogue.",
+                                hit, rip, rva, faultAddr);
+
+                        pInfo->ContextRecord->Rdx = 0;
+                        pInfo->ContextRecord->Rax = 0; // Set return value to false (0)
+
+                        // Safely zero-out destination resource pointer if slot [rsp + 0xC0] is valid
+                        uintptr_t rsp = pInfo->ContextRecord->Rsp;
+                        uintptr_t* pOutSlot = (uintptr_t*)(rsp + 0xC0);
+                        if (!IsBadReadPtr(pOutSlot, sizeof(uintptr_t)) && *pOutSlot != 0) {
+                            uintptr_t outDest = *pOutSlot;
+                            if (!IsBadWritePtr((void*)outDest, sizeof(uintptr_t))) {
+                                *(uintptr_t*)outDest = 0;
+                            }
+                        }
+
+                        // Jump directly to function epilogue at 0xFED06A (rip + 0x9D)
+                        pInfo->ContextRecord->Rip = (DWORD64)(rip + 0x9D);
+                        return EXCEPTION_CONTINUE_EXECUTION;
+                    }
                 }
+
+                // CASE 3: Generic NULL pointer read within game image during resource streaming
+                if (isWrite == 0 && faultAddr < 0x100) {
+                    // Check if RIP points to a 64-bit load instruction: mov reg64, [null_reg + disp]
+                    // 48 8B ...
+                    if (rip[0] == 0x48 && rip[1] == 0x8B) {
+                        LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                        log_msg("[GUARD] Detected NULL-pointer load at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX).",
+                                rip, rva, faultAddr);
+                    }
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
             }
         }
     }
