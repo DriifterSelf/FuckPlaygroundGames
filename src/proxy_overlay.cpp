@@ -108,15 +108,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, waveBuf, (int)strlen(waveBuf));
         y += step;
 
-        // 3d. Variable Rate Shading Tier 2
-        char vrsBuf[140];
-        sprintf_s(vrsBuf, "  ├─ Variable Rate Shading: %s (VRS Tier 2 Motion Opt)",
-                  g_tel.d3d12_vrs_tier2 ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, g_tel.d3d12_vrs_tier2 ? RGB(70, 240, 140) : RGB(255, 205, 60));
-        TextOutA(hdc, 10, y, vrsBuf, (int)strlen(vrsBuf));
-        y += step;
-
-        // 3e. Async Copy Queue
+        // 3d. Async Copy Queue
         char copyBuf[140];
         sprintf_s(copyBuf, "  └─ Async Copy Queue: %s (Direct Texture Streaming)",
                   g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");

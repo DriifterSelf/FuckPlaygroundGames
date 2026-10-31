@@ -56,19 +56,6 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             log_msg("[DX12] [INJECT] Enabled DXR Tier 1.1 (Inline RayQuery in Compute Shaders)");
             break;
         }
-        case D3D12_FEATURE_D3D12_OPTIONS6: {
-            // Enable Variable Rate Shading Tier 2 for high-speed motion shading on RDNA4
-            D3D12_FEATURE_DATA_D3D12_OPTIONS6* opt6 = (D3D12_FEATURE_DATA_D3D12_OPTIONS6*)pFeatureSupportData;
-            if (opt6->VariableShadingRateTier < D3D12_VARIABLE_SHADING_RATE_TIER_2) {
-                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
-            }
-            opt6->BackgroundProcessingSupported = TRUE;
-            opt6->AdditionalShadingRatesSupported = TRUE;
-            opt6->ShadingRateImageTileSize = 16;
-            g_tel.d3d12_vrs_tier2 = 1;
-            log_msg("[DX12] [INJECT] Enabled Variable Rate Shading Tier 2 (TileSize=16)");
-            break;
-        }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
             // Enable Mesh Shader Tier 1 for GPU cluster culling
             D3D12_FEATURE_DATA_D3D12_OPTIONS7* opt7 = (D3D12_FEATURE_DATA_D3D12_OPTIONS7*)pFeatureSupportData;
