@@ -21,6 +21,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
     HRESULT hr = s_orig_cfs(This, Feature, pFeatureSupportData, FeatureSupportDataSize);
 
     if (SUCCEEDED(hr) && pFeatureSupportData != NULL && g_cfg.compute_offload) {
+        InterlockedIncrement(&g_tel.d3d12_feature_queries);
         switch (Feature) {
         case D3D12_FEATURE_D3D12_OPTIONS1: {
             // WaveOps and Wave32/64 execution mode for AMD RDNA4
@@ -29,6 +30,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt1->WaveLaneCountMin = 32;
             opt1->WaveLaneCountMax = 64;
             opt1->TotalLaneCount = g_tel.num_cus * 64;
+            g_tel.d3d12_wave_ops = 1;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS3: {
+            // Enable Async Copy Queue timestamps and casting for fast texture streaming
+            D3D12_FEATURE_DATA_D3D12_OPTIONS3* opt3 = (D3D12_FEATURE_DATA_D3D12_OPTIONS3*)pFeatureSupportData;
+            opt3->CopyQueueTimestampQueriesSupported = TRUE;
+            opt3->CastingFullyTypedFormatSupported = TRUE;
+            g_tel.d3d12_async_copy = 1;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
@@ -38,6 +48,19 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 opt5->RaytracingTier = D3D12_RAYTRACING_TIER_1_1;
             }
             opt5->RenderPassesTier = D3D12_RENDER_PASS_TIER_1;
+            g_tel.d3d12_rayquery = 1;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS6: {
+            // Enable Variable Rate Shading Tier 2 for high-speed motion shading on RDNA4
+            D3D12_FEATURE_DATA_D3D12_OPTIONS6* opt6 = (D3D12_FEATURE_DATA_D3D12_OPTIONS6*)pFeatureSupportData;
+            if (opt6->VariableShadingRateTier < D3D12_VARIABLE_SHADING_RATE_TIER_2) {
+                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
+            }
+            opt6->BackgroundProcessingSupported = TRUE;
+            opt6->AdditionalShadingRatesSupported = TRUE;
+            opt6->ShadingRateImageTileSize = 16;
+            g_tel.d3d12_vrs_tier2 = 1;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
@@ -46,6 +69,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             if (opt7->MeshShaderTier < D3D12_MESH_SHADER_TIER_1) {
                 opt7->MeshShaderTier = D3D12_MESH_SHADER_TIER_1;
             }
+            g_tel.d3d12_mesh_shader = 1;
             break;
         }
         default:

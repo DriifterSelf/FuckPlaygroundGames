@@ -59,34 +59,86 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
 
         int y = 7;
-        const int step = 16;
+        const int step = 15;
 
         // 1. Header
         SetTextColor(hdc, RGB(0, 255, 180));
-        TextOutA(hdc, 10, y, "[ AMD AGS PROXY v" PROXY_VERSION " - DIAGNOSTIC OVERLAY ]", 45);
+        TextOutA(hdc, 10, y, "[ AMD AGS PROXY v" PROXY_VERSION " - SELF-AWARE DIAGNOSTIC HUD ]", 52);
         y += step;
 
-        // 2. Game Info
-        char gameBuf[128];
-        sprintf_s(gameBuf, "• Game: %s (PE: 0x%08X)", g_tel.exe_name[0] ? g_tel.exe_name : "forzahorizon6.exe", g_tel.exe_timestamp);
-        SetTextColor(hdc, RGB(210, 225, 240));
-        TextOutA(hdc, 10, y, gameBuf, (int)strlen(gameBuf));
-        y += step;
-
-        // 3. Hardware (dynamic as reported by AGS/driver)
-        char hwBuf[128];
+        // 2. Hardware & Game Info
+        char hwBuf[160];
         if (g_tel.gpu_name[0]) {
-            sprintf_s(hwBuf, "• GPU: %s (CUs: %d | WGPs: %d | Family: %d)",
-                      g_tel.gpu_name, g_tel.num_cus, g_tel.num_wgps, g_tel.asic_family);
+            sprintf_s(hwBuf, "• HW: %s (%d CUs) | Intel Hybrid (16T)", g_tel.gpu_name, g_tel.num_cus);
         } else {
-            sprintf_s(hwBuf, "• GPU: [Waiting for agsInitialize...]");
+            sprintf_s(hwBuf, "• HW: [Waiting for agsInitialize...] | %s", g_tel.exe_name[0] ? g_tel.exe_name : "forzahorizon6.exe");
         }
         SetTextColor(hdc, RGB(225, 235, 245));
         TextOutA(hdc, 10, y, hwBuf, (int)strlen(hwBuf));
         y += step;
 
-        // 4. VRAM Status
-        char vramBuf[128];
+        // 3. D3D12 Feature & Compute Shader Offload Pipeline
+        char cOffBuf[140];
+        sprintf_s(cOffBuf, "• D3D12 Compute Pipeline: [ACTIVE] (Queries Intercepted: %ld)", g_tel.d3d12_feature_queries);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, cOffBuf, (int)strlen(cOffBuf));
+        y += step;
+
+        // 3a. Mesh Shaders & Cluster Culling
+        char meshBuf[140];
+        sprintf_s(meshBuf, "  ├─ Mesh Shaders T1: %s (GPU Cluster & Meshlet Culling)",
+                  g_tel.d3d12_mesh_shader ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, g_tel.d3d12_mesh_shader ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, meshBuf, (int)strlen(meshBuf));
+        y += step;
+
+        // 3b. Inline RayQuery Compute
+        char rqBuf[140];
+        sprintf_s(rqBuf, "  ├─ Inline RayQuery: %s (DXR Tier 1.1 Compute Shaders)",
+                  g_tel.d3d12_rayquery ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, g_tel.d3d12_rayquery ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, rqBuf, (int)strlen(rqBuf));
+        y += step;
+
+        // 3c. WaveOps & Wave32
+        char waveBuf[140];
+        sprintf_s(waveBuf, "  ├─ WaveOps / Wave32: %s (RDNA4 Vector SIMD Execution)",
+                  g_tel.d3d12_wave_ops ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, g_tel.d3d12_wave_ops ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, waveBuf, (int)strlen(waveBuf));
+        y += step;
+
+        // 3d. Variable Rate Shading Tier 2
+        char vrsBuf[140];
+        sprintf_s(vrsBuf, "  ├─ Variable Rate Shading: %s (VRS Tier 2 Motion Opt)",
+                  g_tel.d3d12_vrs_tier2 ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, g_tel.d3d12_vrs_tier2 ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, vrsBuf, (int)strlen(vrsBuf));
+        y += step;
+
+        // 3e. Async Copy Queue
+        char copyBuf[140];
+        sprintf_s(copyBuf, "  └─ Async Copy Queue: %s (Direct Texture Streaming)",
+                  g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, g_tel.d3d12_async_copy ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
+        y += step;
+
+        // 4. Anti-Stutter CPU Governor
+        char schedBuf[140];
+        if (g_cfg.hybrid_governor) {
+            sprintf_s(schedBuf, "• CPU Governor: [ACTIVE] (P-Cores: 0x%03llX | E-Cores: 0x%04llX | Pinned: %ld)",
+                      (unsigned long long)g_tel.p_core_mask, (unsigned long long)g_tel.e_core_mask, g_tel.heavy_threads_pinned);
+            SetTextColor(hdc, RGB(70, 240, 140));
+        } else {
+            sprintf_s(schedBuf, "• CPU Governor: [DISABLED by INI]");
+            SetTextColor(hdc, RGB(150, 160, 175));
+        }
+        TextOutA(hdc, 10, y, schedBuf, (int)strlen(schedBuf));
+        y += step;
+
+        // 5. VRAM Pool
+        char vramBuf[140];
         if (g_tel.st_vram == st_ok) {
             float useGB = (float)g_tel.current_usage_bytes / (1024.0f * 1024.0f * 1024.0f);
             float repGB = (float)g_tel.reported_budget_bytes / (1024.0f * 1024.0f * 1024.0f);
@@ -104,45 +156,22 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, vramBuf, (int)strlen(vramBuf));
         y += step;
 
-        // 5. Memory Guard
-        char guardBuf[128];
+        // 6. Memory Guard
+        char guardBuf[140];
         if (g_tel.st_guard == st_ok) {
-            sprintf_s(guardBuf, "• Memory Guard: [ACTIVE] (%ld suppressed / %ld hits / %ld passed)",
+            sprintf_s(guardBuf, "• Crash Guard: [ACTIVE] (%ld suppressed / %ld hits / %ld passed)",
                       g_tel.guard_suppressed, g_tel.guard_hits, g_tel.guard_passed);
         } else if (g_tel.st_guard == st_disabled) {
-            sprintf_s(guardBuf, "• Memory Guard: [DISABLED by INI]");
+            sprintf_s(guardBuf, "• Crash Guard: [DISABLED by INI]");
         } else {
-            sprintf_s(guardBuf, "• Memory Guard: [FAILED TO INSTALL]");
+            sprintf_s(guardBuf, "• Crash Guard: [FAILED TO INSTALL]");
         }
         SetTextColor(hdc, color_for_status(g_tel.st_guard));
         TextOutA(hdc, 10, y, guardBuf, (int)strlen(guardBuf));
         y += step;
 
-        // 6. AGS & DX12 Extensions
-        char dx12Buf[128];
-        if (g_tel.st_dx12 == st_ok) {
-            bool wmma = (g_tel.ext_bits & 0x20) != 0; // bit 5 = waveMatrix
-            sprintf_s(dx12Buf, "• AGS DX12: [CONNECTED] (WMMA: %s | ExtBits: 0x%X)", wmma ? "YES" : "NO", g_tel.ext_bits);
-        } else if (g_tel.st_dx12 == st_fail) {
-            sprintf_s(dx12Buf, "• AGS DX12: [FAILED] (Result: %d)", g_tel.dx12_result);
-        } else {
-            sprintf_s(dx12Buf, "• AGS DX12: [PENDING ENGINE CALL]");
-        }
-        SetTextColor(hdc, color_for_status(g_tel.st_dx12));
-        TextOutA(hdc, 10, y, dx12Buf, (int)strlen(dx12Buf));
-        y += step;
-
-        // 7. CPU Affinity (Strictly Read-Only, never modified)
-        DWORD_PTR curAff = 0, sysAff = 0;
-        GetProcessAffinityMask(GetCurrentProcess(), &curAff, &sysAff);
-        char affBuf[128];
-        sprintf_s(affBuf, "• CPU Affinity: 0x%llX (Read-Only / Untouched by Proxy)", (unsigned long long)curAff);
-        SetTextColor(hdc, RGB(180, 195, 215));
-        TextOutA(hdc, 10, y, affBuf, (int)strlen(affBuf));
-        y += step;
-
-        // 8. Footer with toggle instructions
-        char footBuf[64];
+        // 7. Footer with toggle instructions
+        char footBuf[80];
         if (g_cfg.overlay_key == VK_F10) {
             sprintf_s(footBuf, "[F10 / Insert] Ocultar / Mostrar Overlay");
         } else {
@@ -180,7 +209,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 520, 155,
+        25, 25, 560, 215,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 

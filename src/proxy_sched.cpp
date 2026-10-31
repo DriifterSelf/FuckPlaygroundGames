@@ -62,6 +62,8 @@ static void DetectHybridTopology() {
 
         s_p_core_mask = pMask;
         s_e_core_mask = eMask;
+        g_tel.p_core_mask = pMask;
+        g_tel.e_core_mask = eMask;
         log_msg("[SCHED] Hybrid CPU topology detected: P-Cores Mask=0x%llX, E-Cores Mask=0x%llX",
                 (unsigned long long)s_p_core_mask, (unsigned long long)s_e_core_mask);
     }
@@ -80,6 +82,7 @@ static DWORD WINAPI GovernorThread(LPVOID) {
             if (hSnap != INVALID_HANDLE_VALUE) {
                 THREADENTRY32 te;
                 te.dwSize = sizeof(THREADENTRY32);
+                LONG pinnedCount = 0;
                 if (Thread32First(hSnap, &te)) {
                     do {
                         if (te.th32OwnerProcessID == pid && te.th32ThreadID != GetCurrentThreadId()) {
@@ -89,15 +92,17 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                 if (hThread) {
                                     SetThreadAffinityMask(hThread, s_p_core_mask);
                                     CloseHandle(hThread);
+                                    pinnedCount++;
                                 }
                             }
                         }
                     } while (Thread32Next(hSnap, &te));
                 }
+                g_tel.heavy_threads_pinned = pinnedCount;
                 CloseHandle(hSnap);
             }
         }
-        Sleep(2000); // Check every 2 seconds
+        Sleep(1000); // Check every 1 second
     }
     return 0;
 }
