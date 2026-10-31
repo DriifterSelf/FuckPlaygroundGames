@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.8.3"
+#define PROXY_VERSION "3.8.4"
 
 enum component_status
 {
@@ -54,6 +54,8 @@ struct proxy_telemetry
 
     // Direct3D 12 Compute & Feature Accelerators
     volatile LONG d3d12_feature_queries;
+    volatile LONG d3d12_cfs_injected;
+    volatile LONG d3d12_cfs_passed;
     int d3d12_wave_ops;
     int d3d12_mesh_shader;
     int d3d12_rayquery;
@@ -65,6 +67,8 @@ struct proxy_telemetry
     int d3d12_enhanced_barriers;
     int d3d12_gpu_atomics64;
     volatile LONG d3d12_particle_fixes;
+    volatile LONG d3d12_srv_total;
+    volatile LONG d3d12_srv_passed;
     int d3d12_execute_indirect_1_1;
     int d3d12_work_graphs;
     int d3d12_sampler_feedback;
@@ -75,6 +79,8 @@ struct proxy_telemetry
     int st_vram;
     char vram_err[96];
     volatile LONG vram_calls;
+    volatile LONG vram_uncap_hits;
+    volatile LONG vram_passed;
     UINT64 dedicated_bytes;
     UINT64 current_usage_bytes;
     UINT64 os_budget_bytes;
@@ -88,6 +94,8 @@ struct proxy_telemetry
     // Scheduler & Thread Governor Telemetry
     volatile LONG heavy_threads_pinned;
     volatile LONG ecore_threads_active;
+    volatile LONG sched_scans;
+    volatile LONG sched_migrations;
     DWORD_PTR p_core_mask;
     DWORD_PTR e_core_mask;
     DWORD_PTR all_cores_mask;

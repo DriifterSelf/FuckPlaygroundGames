@@ -16,6 +16,7 @@ struct ThreadSample {
     ULONGLONG last_total_time;
     DWORD last_tick;
     float last_frame_work_ms;
+    int last_affinity_type; // 1 = P-Core, 2 = E-Core
 };
 
 static ThreadSample s_tracker[MAX_TRACKED_THREADS] = {};
@@ -134,6 +135,7 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                             if (hThread) {
                                 FILETIME cr, ex, kernel, user;
                                 float frameWorkMs = 0.0f;
+                                ThreadSample* sample = FindOrCreateSample(te.th32ThreadID);
 
                                 if (GetThreadTimes(hThread, &cr, &ex, &kernel, &user)) {
                                     ULARGE_INTEGER k, u;
@@ -142,7 +144,6 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     ULONGLONG total = k.QuadPart + u.QuadPart;
                                     DWORD now = GetTickCount();
 
-                                    ThreadSample* sample = FindOrCreateSample(te.th32ThreadID);
                                     if (sample && sample->last_total_time > 0) {
                                         DWORD elapsed = now - sample->last_tick;
                                         if (elapsed > 0 && total >= sample->last_total_time) {
@@ -165,15 +166,26 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                 //    chew through background work without stealing cycles or cache from P-Cores.
                                 // 3. Interactive/lightweight workers (frameWorkMs <= ECoreThresholdMs):
                                 //    Pinned to P-Cores (0x0FFF) for low latency.
+                                int targetAffinityType = 1; // 1 = P-Core, 2 = E-Core
                                 if (te.tpBasePri >= 10) {
+                                    targetAffinityType = 1;
                                     SetThreadAffinityMask(hThread, s_p_core_mask);
                                     pCorePinned++;
                                 } else if (frameWorkMs > (float)g_cfg.ecore_threshold_ms) {
+                                    targetAffinityType = 2;
                                     SetThreadAffinityMask(hThread, s_e_core_mask);
                                     eCoreActive++;
                                 } else {
+                                    targetAffinityType = 1;
                                     SetThreadAffinityMask(hThread, s_p_core_mask);
                                     pCorePinned++;
+                                }
+
+                                if (sample) {
+                                    if (sample->last_affinity_type != 0 && sample->last_affinity_type != targetAffinityType) {
+                                        InterlockedIncrement(&g_tel.sched_migrations);
+                                    }
+                                    sample->last_affinity_type = targetAffinityType;
                                 }
 
                                 CloseHandle(hThread);
@@ -182,6 +194,7 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                     } while (Thread32Next(hSnap, &te));
                 }
 
+                InterlockedIncrement(&g_tel.sched_scans);
                 g_tel.heavy_threads_pinned = pCorePinned;
                 g_tel.ecore_threads_active = eCoreActive;
                 CloseHandle(hSnap);

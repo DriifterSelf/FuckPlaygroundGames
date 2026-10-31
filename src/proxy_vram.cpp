@@ -65,6 +65,7 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
 
                 pVideoMemoryInfo->Budget = target_budget;
                 g_tel.reported_budget_bytes = target_budget;
+                InterlockedIncrement(&g_tel.vram_uncap_hits);
 
                 // Zero-stutter rate-limited logging: maximum once every 2.5 seconds and only on significant shifts
                 DWORD now = GetTickCount();
@@ -84,6 +85,7 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
             }
         } else {
             g_tel.reported_budget_bytes = pVideoMemoryInfo->Budget;
+            InterlockedIncrement(&g_tel.vram_passed);
         }
     }
     return hr;

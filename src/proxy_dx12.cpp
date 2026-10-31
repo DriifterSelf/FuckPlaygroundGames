@@ -40,6 +40,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
         }
 
+        bool injected = true;
         switch (Feature) {
         case D3D12_FEATURE_D3D12_OPTIONS: {
             // Feature 0: Bindless Rendering, Single-Pass Cubemaps, and Hardware ROVs
@@ -219,8 +220,17 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         default:
+            injected = false;
             break;
         }
+
+        if (injected) {
+            InterlockedIncrement(&g_tel.d3d12_cfs_injected);
+        } else {
+            InterlockedIncrement(&g_tel.d3d12_cfs_passed);
+        }
+    } else {
+        InterlockedIncrement(&g_tel.d3d12_cfs_passed);
     }
     return hr;
 }
@@ -236,6 +246,8 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
     const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 ) {
+    InterlockedIncrement(&g_tel.d3d12_srv_total);
+
     if (pDesc) {
         if ((pDesc->Format == DXGI_FORMAT_BC4_UNORM || pDesc->Format == DXGI_FORMAT_BC4_SNORM) &&
             pDesc->Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING)
@@ -271,6 +283,8 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
             return;
         }
     }
+
+    InterlockedIncrement(&g_tel.d3d12_srv_passed);
     s_orig_csrv(This, pResource, pDesc, DestDescriptor);
 }
 

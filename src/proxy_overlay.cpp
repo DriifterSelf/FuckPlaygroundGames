@@ -77,7 +77,8 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3. D3D12 Feature & Compute Shader Offload Pipeline
         char cOffBuf[140];
-        sprintf_s(cOffBuf, "[+] D3D12 Compute Pipeline: [ACTIVE] (Queries Intercepted: %ld)", g_tel.d3d12_feature_queries);
+        sprintf_s(cOffBuf, "[+] D3D12 Features: [ACTIVE] (%ld injected / %ld queries / %ld passed)",
+                  g_tel.d3d12_cfs_injected, g_tel.d3d12_feature_queries, g_tel.d3d12_cfs_passed);
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, cOffBuf, (int)strlen(cOffBuf));
         y += step;
@@ -140,7 +141,8 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3i. Particle Swizzle Fix
         char partBuf[140];
-        sprintf_s(partBuf, " |-- Particle Swizzle Fix: [ACTIVE] (%ld SRVs corregidos)", g_tel.d3d12_particle_fixes);
+        sprintf_s(partBuf, " |-- Particle Swizzle: [ACTIVE] (%ld fixes / %ld BC4 hits / %ld passed)",
+                  g_tel.d3d12_particle_fixes, g_tel.d3d12_particle_fixes, g_tel.d3d12_srv_passed);
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
@@ -155,9 +157,8 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         // 4. Dynamic CPU Governor (8ms Threshold)
         char schedBuf[160];
         if (g_cfg.hybrid_governor) {
-            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (P-Cores: %ld hilos <=%dms | E-Cores: %ld hilos >%dms)",
-                      g_tel.heavy_threads_pinned, g_cfg.ecore_threshold_ms,
-                      g_tel.ecore_threads_active, g_cfg.ecore_threshold_ms);
+            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core <=8ms | %ld E-Core >8ms | %ld migrations)",
+                      g_tel.heavy_threads_pinned, g_tel.ecore_threads_active, g_tel.sched_migrations);
             SetTextColor(hdc, RGB(70, 240, 140));
         } else {
             sprintf_s(schedBuf, "[+] CPU Governor: [DISABLED by INI]");
@@ -172,8 +173,8 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             float useGB = (float)g_tel.current_usage_bytes / (1024.0f * 1024.0f * 1024.0f);
             float repGB = (float)g_tel.reported_budget_bytes / (1024.0f * 1024.0f * 1024.0f);
             float dedGB = (float)g_tel.dedicated_bytes / (1024.0f * 1024.0f * 1024.0f);
-            sprintf_s(vramBuf, "[+] VRAM Pool: %s %.1f / %.1f GB (Max: %.1f GB) | Calls: %ld",
-                      text_for_status(g_tel.st_vram), useGB, repGB, dedGB, g_tel.vram_calls);
+            sprintf_s(vramBuf, "[+] VRAM Pool: %s %.1f / %.1f GB (%ld uncapped / %ld calls / %ld passed)",
+                      text_for_status(g_tel.st_vram), useGB, repGB, g_tel.vram_uncap_hits, g_tel.vram_calls, g_tel.vram_passed);
         } else if (g_tel.st_vram == st_disabled) {
             sprintf_s(vramBuf, "[+] VRAM Pool: [DISABLED by INI] (Using default OS budget)");
         } else if (g_tel.st_vram == st_fail) {
@@ -238,7 +239,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 310,
+        25, 25, 620, 310,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
