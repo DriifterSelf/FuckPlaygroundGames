@@ -48,7 +48,7 @@ void open_log_and_config()
 
     wchar_t log_path[MAX_PATH];
     swprintf_s(log_path, L"%s\\rdna4_ags_proxy.log", base);
-    s_log = _wfsopen(log_path, L"a+", _SH_DENYNO);
+    s_log = _wfsopen(log_path, L"w", _SH_DENYNO);
 
     swprintf_s(s_ini_path, L"%s\\rdna4_ags_proxy.ini", base);
     write_default(L"Overlay", L"1");

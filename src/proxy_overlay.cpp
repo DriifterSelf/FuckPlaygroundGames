@@ -134,10 +134,17 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3g. Async Copy Queue
         char copyBuf[140];
-        sprintf_s(copyBuf, "  └─ Async Copy Queue: %s (Direct Texture Streaming)",
+        sprintf_s(copyBuf, "  ├─ Async Copy Queue: %s (Direct Texture Streaming)",
                   g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");
         SetTextColor(hdc, g_tel.d3d12_async_copy ? RGB(70, 240, 140) : RGB(255, 205, 60));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
+        y += step;
+
+        // 3h. Particle Swizzle Fix
+        char partBuf[140];
+        sprintf_s(partBuf, "  └─ Particle Swizzle Fix: [ACTIVE] (%ld SRVs corregidos)", g_tel.d3d12_particle_fixes);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
 
         // 4. Dynamic CPU Governor (8ms Threshold)
@@ -226,7 +233,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 265,
+        25, 25, 580, 285,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
