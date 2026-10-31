@@ -22,6 +22,8 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
 
     if (SUCCEEDED(hr) && pFeatureSupportData != NULL && g_cfg.compute_offload) {
         InterlockedIncrement(&g_tel.d3d12_feature_queries);
+        log_msg("[DX12] CheckFeatureSupport query: Feature=%d (0x%X)", Feature, Feature);
+
         switch (Feature) {
         case D3D12_FEATURE_D3D12_OPTIONS1: {
             // WaveOps and Wave32/64 execution mode for AMD RDNA4
@@ -31,6 +33,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt1->WaveLaneCountMax = 64;
             opt1->TotalLaneCount = g_tel.num_cus * 64;
             g_tel.d3d12_wave_ops = 1;
+            log_msg("[DX12] [INJECT] Enabled WaveOps & Wave32 for RDNA4 (TotalLaneCount=%u)", opt1->TotalLaneCount);
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS3: {
@@ -39,6 +42,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt3->CopyQueueTimestampQueriesSupported = TRUE;
             opt3->CastingFullyTypedFormatSupported = TRUE;
             g_tel.d3d12_async_copy = 1;
+            log_msg("[DX12] [INJECT] Enabled Async Copy Queue & Typed Format Casting");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
@@ -49,6 +53,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
             opt5->RenderPassesTier = D3D12_RENDER_PASS_TIER_1;
             g_tel.d3d12_rayquery = 1;
+            log_msg("[DX12] [INJECT] Enabled DXR Tier 1.1 (Inline RayQuery in Compute Shaders)");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS6: {
@@ -61,6 +66,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt6->AdditionalShadingRatesSupported = TRUE;
             opt6->ShadingRateImageTileSize = 16;
             g_tel.d3d12_vrs_tier2 = 1;
+            log_msg("[DX12] [INJECT] Enabled Variable Rate Shading Tier 2 (TileSize=16)");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
@@ -70,6 +76,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 opt7->MeshShaderTier = D3D12_MESH_SHADER_TIER_1;
             }
             g_tel.d3d12_mesh_shader = 1;
+            log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 (GPU Cluster Culling)");
             break;
         }
         default:
@@ -83,13 +90,14 @@ void dx12_hook_install(ID3D12Device* pDevice) {
     if (!pDevice) return;
 
     void** vtbl = *(void***)pDevice;
-    if (vtbl && vtbl[40] != (void*)Hook_CheckFeatureSupport) {
+    // CheckFeatureSupport is method index 13 in ID3D12DeviceVtbl (offset 104 bytes = 13 * 8)
+    if (vtbl && vtbl[13] != (void*)Hook_CheckFeatureSupport) {
         DWORD oldProtect;
-        if (VirtualProtect(&vtbl[40], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            s_orig_cfs = (PFN_CheckFeatureSupport)vtbl[40];
-            vtbl[40] = (void*)Hook_CheckFeatureSupport;
-            VirtualProtect(&vtbl[40], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[DX12] Successfully hooked ID3D12Device::CheckFeatureSupport (vtbl[40]) for compute offload & DXR 1.1.");
+        if (VirtualProtect(&vtbl[13], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            s_orig_cfs = (PFN_CheckFeatureSupport)vtbl[13];
+            vtbl[13] = (void*)Hook_CheckFeatureSupport;
+            VirtualProtect(&vtbl[13], sizeof(void*), oldProtect, &oldProtect);
+            log_msg("[DX12] Successfully hooked ID3D12Device::CheckFeatureSupport (vtbl[13]) for compute offload & DXR 1.1.");
         } else {
             log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CheckFeatureSupport.");
         }
