@@ -108,7 +108,23 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, waveBuf, (int)strlen(waveBuf));
         y += step;
 
-        // 3d. Async Copy Queue
+        // 3d. Bindless Tier 3 & Single-Pass Cubemaps
+        char bndBuf[140];
+        sprintf_s(bndBuf, "  ├─ Bindless & Cubemaps: %s (Tier 3 & 6-Face Single-Pass)",
+                  (g_tel.d3d12_bindless_tier3 && g_tel.d3d12_single_pass_cubemaps) ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, (g_tel.d3d12_bindless_tier3 && g_tel.d3d12_single_pass_cubemaps) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, bndBuf, (int)strlen(bndBuf));
+        y += step;
+
+        // 3e. Hardware Depth Bounds & ROVs
+        char rovBuf[140];
+        sprintf_s(rovBuf, "  ├─ Light Culling & ROVs: %s (GPU DepthBounds & OIT)",
+                  (g_tel.d3d12_depth_bounds || g_tel.d3d12_rovs_oit) ? "[ACTIVE]" : "[PENDING ENGINE]");
+        SetTextColor(hdc, (g_tel.d3d12_depth_bounds || g_tel.d3d12_rovs_oit) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        TextOutA(hdc, 10, y, rovBuf, (int)strlen(rovBuf));
+        y += step;
+
+        // 3f. Async Copy Queue
         char copyBuf[140];
         sprintf_s(copyBuf, "  └─ Async Copy Queue: %s (Direct Texture Streaming)",
                   g_tel.d3d12_async_copy ? "[ACTIVE]" : "[PENDING ENGINE]");
@@ -202,7 +218,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 560, 215,
+        25, 25, 580, 245,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 

@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.4.1"
+#define PROXY_VERSION "3.5"
 
 enum component_status
 {
@@ -57,6 +57,10 @@ struct proxy_telemetry
     int d3d12_mesh_shader;
     int d3d12_rayquery;
     int d3d12_async_copy;
+    int d3d12_bindless_tier3;
+    int d3d12_single_pass_cubemaps;
+    int d3d12_rovs_oit;
+    int d3d12_depth_bounds;
 
     int st_vram;
     char vram_err[96];
