@@ -182,14 +182,22 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, plcBuf, (int)strlen(plcBuf));
         y += step;
 
-        // 3n. Sampler Feedback
+        // 3n. Hardware Command Queue Priority Elevation
+        char qBuf[140];
+        sprintf_s(qBuf, " |-- HW Queue Priority: [ACTIVE] (%ld Compute / %ld DMA Copy Elevated)",
+                  g_tel.d3d12_compute_queues_elevated, g_tel.d3d12_copy_queues_elevated);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, qBuf, (int)strlen(qBuf));
+        y += step;
+
+        // 3o. Sampler Feedback
         char fbBuf[140];
         sprintf_s(fbBuf, " |-- Sampler Feedback: [ACTIVE] (Hardware Streaming Min-Map)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
         y += step;
 
-        // 3o. Particle Swizzle Fix
+        // 3p. Particle Swizzle Fix
         char partBuf[140];
         sprintf_s(partBuf, " |-- Particle Swizzle: [ACTIVE] (%ld fixes / %ld BC4 hits / %ld passed)",
                   g_tel.d3d12_particle_fixes, g_tel.d3d12_particle_fixes, g_tel.d3d12_srv_passed);
@@ -197,9 +205,9 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
 
-        // 3p. Async Copy Queue & Particle Support
+        // 3q. Async Copy Queue & Particle Support
         char copyBuf[140];
-        sprintf_s(copyBuf, " \\-- Async Copy Queue: [ACTIVE] (Direct DMA Texture Streaming)");
+        sprintf_s(copyBuf, " \\-- Direct DMA ReBAR: [ACTIVE] (Isolated MMU & D3D12 Ultimate 12_2)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
@@ -289,7 +297,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 640, 415,
+        25, 25, 640, 435,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 

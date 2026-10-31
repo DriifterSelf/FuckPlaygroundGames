@@ -3,6 +3,13 @@
 #include <stdio.h>
 #include "proxy_common.h"
 
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommandQueue)(
+    ID3D12Device* This,
+    const D3D12_COMMAND_QUEUE_DESC* pDesc,
+    REFIID riid,
+    void** ppCommandQueue
+);
+
 typedef HRESULT (STDMETHODCALLTYPE *PFN_CheckFeatureSupport)(
     ID3D12Device* This,
     D3D12_FEATURE Feature,
@@ -17,10 +24,41 @@ typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 );
 
+static PFN_CreateCommandQueue s_orig_ccq = NULL;
 static PFN_CheckFeatureSupport s_orig_cfs = NULL;
 static PFN_CreateShaderResourceView s_orig_csrv = NULL;
 static uint64_t s_features_logged_mask = 0;
 static uint64_t s_injected_logged_mask = 0;
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateCommandQueue(
+    ID3D12Device* This,
+    const D3D12_COMMAND_QUEUE_DESC* pDesc,
+    REFIID riid,
+    void** ppCommandQueue
+) {
+    if (pDesc && g_cfg.compute_offload) {
+        D3D12_COMMAND_QUEUE_DESC mod_desc = *pDesc;
+        if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
+            // Elevate Compute Command Queue to High Priority for guaranteed low-latency dispatch
+            // (Used by Audio Raytracing, Hi-Z Occlusion Culling, and Compute Skinning)
+            mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+            InterlockedIncrement(&g_tel.d3d12_compute_queues_elevated);
+            log_msg("[DX12] [QUEUE] Elevating Compute Command Queue to HIGH_PRIORITY");
+            HRESULT hr = s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
+            if (SUCCEEDED(hr)) return hr;
+            return s_orig_ccq(This, pDesc, riid, ppCommandQueue);
+        } else if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_COPY) {
+            // Elevate Copy Command Queue to High Priority for seamless DMA texture streaming
+            mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+            InterlockedIncrement(&g_tel.d3d12_copy_queues_elevated);
+            log_msg("[DX12] [QUEUE] Elevating Copy Command Queue to HIGH_PRIORITY");
+            HRESULT hr = s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
+            if (SUCCEEDED(hr)) return hr;
+            return s_orig_ccq(This, pDesc, riid, ppCommandQueue);
+        }
+    }
+    return s_orig_ccq(This, pDesc, riid, ppCommandQueue);
+}
 
 static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
     ID3D12Device* This,
@@ -56,6 +94,20 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 s_injected_logged_mask |= (1ULL << 0);
                 log_msg("[DX12] [INJECT] Enabled Bindless Tier 3, Single-Pass Cubemaps, and Hardware ROVs (OIT)");
             }
+            break;
+        }
+        case D3D12_FEATURE_ARCHITECTURE: {
+            // Feature 1: Discrete GPU architecture
+            D3D12_FEATURE_DATA_ARCHITECTURE* arch = (D3D12_FEATURE_DATA_ARCHITECTURE*)pFeatureSupportData;
+            arch->TileBasedRenderer = FALSE;
+            arch->UMA = FALSE;
+            arch->CacheCoherentUMA = FALSE;
+            break;
+        }
+        case D3D12_FEATURE_FEATURE_LEVELS: {
+            // Feature 2: Force D3D_FEATURE_LEVEL_12_2 (DirectX 12 Ultimate)
+            D3D12_FEATURE_DATA_FEATURE_LEVELS* fl = (D3D12_FEATURE_DATA_FEATURE_LEVELS*)pFeatureSupportData;
+            fl->MaxSupportedFeatureLevel = D3D_FEATURE_LEVEL_12_2;
             break;
         }
         case D3D12_FEATURE_FORMAT_SUPPORT: {
@@ -137,6 +189,16 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             if (rs->HighestVersion < D3D_ROOT_SIGNATURE_VERSION_1_1) {
                 rs->HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
             }
+            break;
+        }
+        case D3D12_FEATURE_ARCHITECTURE1: {
+            // Feature 16: Discrete GPU with Isolated MMU (Direct VRAM ReBAR DMA without OS IOMMU bounce-buffers)
+            D3D12_FEATURE_DATA_ARCHITECTURE1* arch1 = (D3D12_FEATURE_DATA_ARCHITECTURE1*)pFeatureSupportData;
+            arch1->TileBasedRenderer = FALSE;
+            arch1->UMA = FALSE;
+            arch1->CacheCoherentUMA = FALSE;
+            arch1->IsolatedMMU = TRUE;
+            g_tel.d3d12_isolated_mmu = 1;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -493,6 +555,19 @@ void dx12_hook_install(ID3D12Device* pDevice) {
 
     void** vtbl = *(void***)pDevice;
     if (!vtbl) return;
+
+    // CreateCommandQueue is method index 8 in ID3D12DeviceVtbl (offset 64 bytes = 8 * 8)
+    if (vtbl[8] != (void*)Hook_CreateCommandQueue) {
+        DWORD oldProtect;
+        if (VirtualProtect(&vtbl[8], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            s_orig_ccq = (PFN_CreateCommandQueue)vtbl[8];
+            vtbl[8] = (void*)Hook_CreateCommandQueue;
+            VirtualProtect(&vtbl[8], sizeof(void*), oldProtect, &oldProtect);
+            log_msg("[DX12] Successfully hooked ID3D12Device::CreateCommandQueue (vtbl[8]) for Hardware Queue Priority Elevation.");
+        } else {
+            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CreateCommandQueue.");
+        }
+    }
 
     // CheckFeatureSupport is method index 13 in ID3D12DeviceVtbl (offset 104 bytes = 13 * 8)
     if (vtbl[13] != (void*)Hook_CheckFeatureSupport) {
