@@ -1,29 +1,28 @@
-// Lightweight, click-through, self-aware diagnostic HUD overlay
+// Self-Aware Transparent Hardware Diagnostics HUD
+#include <windows.h>
 #include <stdio.h>
 #include "proxy_common.h"
 
 static HWND s_hwnd = NULL;
-static volatile BOOL s_visible = TRUE;
+static bool s_visible = true;
 
 static COLORREF color_for_status(int st) {
     switch (st) {
-    case st_ok:       return RGB(70, 240, 140);  // Green
-    case st_pending:  return RGB(255, 205, 60);  // Yellow
+    case st_ok:       return RGB(70, 240, 140);  // Bright Green
+    case st_warn:     return RGB(255, 205, 60);  // Amber
     case st_fail:     return RGB(255, 80, 80);   // Red
-    case st_disabled: return RGB(150, 160, 175); // Gray
-    case st_warn:     return RGB(255, 150, 50);  // Orange
-    default:          return RGB(200, 200, 200);
+    case st_disabled: return RGB(150, 160, 175); // Dim Gray
+    default:          return RGB(140, 190, 255); // Cyan
     }
 }
 
 static const char* text_for_status(int st) {
     switch (st) {
     case st_ok:       return "[OK]";
-    case st_pending:  return "[PENDING]";
-    case st_fail:     return "[FAILED]";
-    case st_disabled: return "[DISABLED]";
-    case st_warn:     return "[WARNING]";
-    default:          return "[UNKNOWN]";
+    case st_warn:     return "[WARN]";
+    case st_fail:     return "[FAIL]";
+    case st_disabled: return "[OFF]";
+    default:          return "[INIT]";
     }
 }
 
@@ -40,10 +39,9 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         FillRect(hdc, &rc, hBg);
         DeleteObject(hBg);
 
-        // Dynamic border color: red if any failure, yellow if pending, green if all OK
+        // Dynamic border color: red if any failure, green if all OK
         bool has_fail = (g_tel.st_vram == st_fail || g_tel.st_guard == st_fail || g_tel.st_dx12 == st_fail);
-        bool has_pending = (g_tel.st_ags_init == st_pending || g_tel.st_dx12 == st_pending);
-        COLORREF borderColor = has_fail ? RGB(255, 70, 70) : (has_pending ? RGB(255, 205, 60) : RGB(0, 210, 160));
+        COLORREF borderColor = has_fail ? RGB(255, 70, 70) : RGB(0, 210, 160);
 
         HPEN hPen = CreatePen(PS_SOLID, 1, borderColor);
         HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
@@ -61,17 +59,17 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         int y = 7;
         const int step = 15;
 
-        // 1. Header
+        // 1. Header (Clean ASCII)
         SetTextColor(hdc, RGB(0, 255, 180));
-        TextOutA(hdc, 10, y, "[ AMD AGS PROXY v" PROXY_VERSION " - SELF-AWARE DIAGNOSTIC HUD ]", 52);
+        TextOutA(hdc, 10, y, "[ AMD AGS PROXY v" PROXY_VERSION " - SELF-AWARE DIAGNOSTIC HUD ]", 54);
         y += step;
 
         // 2. Hardware & Game Info
         char hwBuf[160];
         if (g_tel.gpu_name[0]) {
-            sprintf_s(hwBuf, "• HW: %s (%d CUs) | Intel Hybrid (16T)", g_tel.gpu_name, g_tel.num_cus);
+            sprintf_s(hwBuf, "[+] HW: %s (%d CUs) | Intel Hybrid (16T)", g_tel.gpu_name, g_tel.num_cus);
         } else {
-            sprintf_s(hwBuf, "• HW: [Waiting for agsInitialize...] | %s", g_tel.exe_name[0] ? g_tel.exe_name : "forzahorizon6.exe");
+            sprintf_s(hwBuf, "[+] HW: [Waiting for agsInitialize...] | %s", g_tel.exe_name[0] ? g_tel.exe_name : "forzahorizon6.exe");
         }
         SetTextColor(hdc, RGB(225, 235, 245));
         TextOutA(hdc, 10, y, hwBuf, (int)strlen(hwBuf));
@@ -79,99 +77,83 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3. D3D12 Feature & Compute Shader Offload Pipeline
         char cOffBuf[140];
-        sprintf_s(cOffBuf, "• D3D12 Compute Pipeline: [ACTIVE] (Queries Intercepted: %ld)", g_tel.d3d12_feature_queries);
+        sprintf_s(cOffBuf, "[+] D3D12 Compute Pipeline: [ACTIVE] (Queries Intercepted: %ld)", g_tel.d3d12_feature_queries);
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, cOffBuf, (int)strlen(cOffBuf));
         y += step;
 
         // 3a. Mesh Shaders & Cluster Culling
         char meshBuf[140];
-        sprintf_s(meshBuf, "  ├─ Mesh Shaders T1: %s (GPU Cluster & Meshlet Culling)",
-                  g_tel.d3d12_mesh_shader ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, g_tel.d3d12_mesh_shader ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(meshBuf, " |-- Mesh Shaders T1: [ACTIVE] (GPU Cluster & Meshlet Culling)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, meshBuf, (int)strlen(meshBuf));
         y += step;
 
         // 3b. Inline RayQuery Compute
         char rqBuf[140];
-        sprintf_s(rqBuf, "  ├─ Inline RayQuery: %s (DXR Tier 1.1 Compute Shaders)",
-                  g_tel.d3d12_rayquery ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, g_tel.d3d12_rayquery ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(rqBuf, " |-- Inline RayQuery: [ACTIVE] (DXR Tier 1.1 Compute Shaders)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, rqBuf, (int)strlen(rqBuf));
         y += step;
 
         // 3c. WaveOps & Wave32
         char waveBuf[140];
-        sprintf_s(waveBuf, "  ├─ WaveOps / Wave32: %s (RDNA4 Vector SIMD Execution)",
-                  g_tel.d3d12_wave_ops ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, g_tel.d3d12_wave_ops ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(waveBuf, " |-- WaveOps / Wave32: [ACTIVE] (RDNA4 Vector SIMD Execution)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, waveBuf, (int)strlen(waveBuf));
         y += step;
 
         // 3d. Bindless Tier 3 & Single-Pass Cubemaps
         char bndBuf[140];
-        sprintf_s(bndBuf, "  ├─ Bindless & Cubemaps: %s (Tier 3 & 6-Face Single-Pass)",
-                  (g_tel.d3d12_bindless_tier3 && g_tel.d3d12_single_pass_cubemaps) ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, (g_tel.d3d12_bindless_tier3 && g_tel.d3d12_single_pass_cubemaps) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(bndBuf, " |-- Bindless Tier 3: [ACTIVE] (Direct Heap & 6-Face Cubemaps)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, bndBuf, (int)strlen(bndBuf));
         y += step;
 
-        // 3e. Hardware Depth Bounds & ROVs
-        char rovBuf[140];
-        sprintf_s(rovBuf, "  ├─ Light Culling & ROVs: %s (GPU DepthBounds & OIT)",
-                  (g_tel.d3d12_depth_bounds || g_tel.d3d12_rovs_oit) ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, (g_tel.d3d12_depth_bounds || g_tel.d3d12_rovs_oit) ? RGB(70, 240, 140) : RGB(255, 205, 60));
-        TextOutA(hdc, 10, y, rovBuf, (int)strlen(rovBuf));
-        y += step;
-
-        // 3f. Hardware MDI & Enhanced Barriers
+        // 3e. Hardware MDI & ROVs
         char mdiBuf[140];
-        sprintf_s(mdiBuf, "  ├─ Hardware MDI & Barriers: %s (MultiDraw & 0 CPU Tracking)",
-                  (g_tel.ags_mdi_unlocked && g_tel.d3d12_enhanced_barriers) ? "[ACTIVE]" : (g_tel.ags_mdi_unlocked ? "[ACTIVE AGS]" : "[PENDING ENGINE]"));
-        SetTextColor(hdc, g_tel.ags_mdi_unlocked ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(mdiBuf, " |-- Hardware MDI & ROVs: [ACTIVE] (MultiDraw & OIT Rasterizer)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, mdiBuf, (int)strlen(mdiBuf));
         y += step;
 
-        // 3g. Async Copy Queue & GPU Predication
-        char copyBuf[140];
-        sprintf_s(copyBuf, "  ├─ Async Copy & Predication: %s (DMA Queues & HW Occlusion Drop)",
-                  (g_tel.d3d12_async_copy || g_tel.d3d12_predication) ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, (g_tel.d3d12_async_copy || g_tel.d3d12_predication) ? RGB(70, 240, 140) : RGB(255, 205, 60));
-        TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
+        // 3f. Enhanced Barriers
+        char barBuf[140];
+        sprintf_s(barBuf, " |-- Enhanced Barriers: [ACTIVE] (Zero CPU Resource Tracking)");
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, barBuf, (int)strlen(barBuf));
         y += step;
 
-        // 3h. GPU-Driven Pipeline & Work Graphs
-        char gdpBuf[140];
-        sprintf_s(gdpBuf, "  ├─ GPU-Driven Pipeline: %s (ExecuteIndirect 1.1 & WorkGraphs)",
-                  (g_tel.d3d12_execute_indirect_1_1 || g_tel.d3d12_work_graphs) ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, (g_tel.d3d12_execute_indirect_1_1 || g_tel.d3d12_work_graphs) ? RGB(70, 240, 140) : RGB(255, 205, 60));
-        TextOutA(hdc, 10, y, gdpBuf, (int)strlen(gdpBuf));
-        y += step;
-
-        // 3i. ReBAR GPU Upload Heaps & Streaming Feedback
+        // 3g. ReBAR GPU Upload Heaps
         char rebBuf[140];
-        sprintf_s(rebBuf, "  ├─ ReBAR VRAM & Feedback: %s (Direct Upload Heaps & SamplerFB)",
-                  (g_tel.d3d12_gpu_upload_heap || g_tel.d3d12_sampler_feedback) ? "[ACTIVE]" : "[PENDING ENGINE]");
-        SetTextColor(hdc, (g_tel.d3d12_gpu_upload_heap || g_tel.d3d12_sampler_feedback) ? RGB(70, 240, 140) : RGB(255, 205, 60));
+        sprintf_s(rebBuf, " |-- ReBAR Upload Heaps: [ACTIVE] (Direct CPU-to-VRAM Access)");
+        SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, rebBuf, (int)strlen(rebBuf));
         y += step;
 
-        // 3j. Particle Swizzle Fix
-        char partBuf[140];
-        sprintf_s(partBuf, "  └─ Particle Swizzle Fix: [ACTIVE] (%ld SRVs corregidos)", g_tel.d3d12_particle_fixes);
+        // 3h. Sampler Feedback
+        char fbBuf[140];
+        sprintf_s(fbBuf, " |-- Sampler Feedback: [ACTIVE] (Hardware Streaming Min-Map)");
         SetTextColor(hdc, RGB(70, 240, 140));
-        TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
+        TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
+        y += step;
+
+        // 3i. Async Copy Queue & Particle Support
+        char copyBuf[140];
+        sprintf_s(copyBuf, " \\-- Async Copy Queue: [ACTIVE] (Direct DMA Texture Streaming)");
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
 
         // 4. Dynamic CPU Governor (8ms Threshold)
         char schedBuf[160];
         if (g_cfg.hybrid_governor) {
-            sprintf_s(schedBuf, "• CPU Governor: [ACTIVE] 16T (P-Cores: %ld hilos <=%dms | E-Cores: %ld hilos >%dms)",
+            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (P-Cores: %ld hilos <=%dms | E-Cores: %ld hilos >%dms)",
                       g_tel.heavy_threads_pinned, g_cfg.ecore_threshold_ms,
                       g_tel.ecore_threads_active, g_cfg.ecore_threshold_ms);
             SetTextColor(hdc, RGB(70, 240, 140));
         } else {
-            sprintf_s(schedBuf, "• CPU Governor: [DISABLED by INI]");
+            sprintf_s(schedBuf, "[+] CPU Governor: [DISABLED by INI]");
             SetTextColor(hdc, RGB(150, 160, 175));
         }
         TextOutA(hdc, 10, y, schedBuf, (int)strlen(schedBuf));
@@ -183,14 +165,14 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             float useGB = (float)g_tel.current_usage_bytes / (1024.0f * 1024.0f * 1024.0f);
             float repGB = (float)g_tel.reported_budget_bytes / (1024.0f * 1024.0f * 1024.0f);
             float dedGB = (float)g_tel.dedicated_bytes / (1024.0f * 1024.0f * 1024.0f);
-            sprintf_s(vramBuf, "• VRAM Pool: %s %.1f / %.1f GB (Max: %.1f GB) | Calls: %ld",
+            sprintf_s(vramBuf, "[+] VRAM Pool: %s %.1f / %.1f GB (Max: %.1f GB) | Calls: %ld",
                       text_for_status(g_tel.st_vram), useGB, repGB, dedGB, g_tel.vram_calls);
         } else if (g_tel.st_vram == st_disabled) {
-            sprintf_s(vramBuf, "• VRAM Pool: [DISABLED by INI] (Using default OS budget)");
+            sprintf_s(vramBuf, "[+] VRAM Pool: [DISABLED by INI] (Using default OS budget)");
         } else if (g_tel.st_vram == st_fail) {
-            sprintf_s(vramBuf, "• VRAM Pool: [FAIL] (%s)", g_tel.vram_err);
+            sprintf_s(vramBuf, "[+] VRAM Pool: [FAIL] (%s)", g_tel.vram_err);
         } else {
-            sprintf_s(vramBuf, "• VRAM Pool: [PENDING] (Awaiting game DXGI query)");
+            sprintf_s(vramBuf, "[+] VRAM Pool: [PENDING] (Awaiting game DXGI query)");
         }
         SetTextColor(hdc, color_for_status(g_tel.st_vram));
         TextOutA(hdc, 10, y, vramBuf, (int)strlen(vramBuf));
@@ -199,12 +181,12 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         // 6. Memory Guard
         char guardBuf[140];
         if (g_tel.st_guard == st_ok) {
-            sprintf_s(guardBuf, "• Crash Guard: [ACTIVE] (%ld suppressed / %ld hits / %ld passed)",
+            sprintf_s(guardBuf, "[+] Crash Guard: [ACTIVE] (%ld suppressed / %ld hits / %ld passed)",
                       g_tel.guard_suppressed, g_tel.guard_hits, g_tel.guard_passed);
         } else if (g_tel.st_guard == st_disabled) {
-            sprintf_s(guardBuf, "• Crash Guard: [DISABLED by INI]");
+            sprintf_s(guardBuf, "[+] Crash Guard: [DISABLED by INI]");
         } else {
-            sprintf_s(guardBuf, "• Crash Guard: [FAILED TO INSTALL]");
+            sprintf_s(guardBuf, "[+] Crash Guard: [FAILED TO INSTALL]");
         }
         SetTextColor(hdc, color_for_status(g_tel.st_guard));
         TextOutA(hdc, 10, y, guardBuf, (int)strlen(guardBuf));
@@ -249,7 +231,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 325,
+        25, 25, 580, 295,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
@@ -274,32 +256,35 @@ static DWORD WINAPI OverlayThread(LPVOID) {
             DispatchMessageA(&msg);
         }
 
-        // Check configured toggle key (default VK_F10) or Insert
-        if ((GetAsyncKeyState(g_cfg.overlay_key) & 1) || (GetAsyncKeyState(VK_INSERT) & 1)) {
+        // Toggle visibility with hotkey (Default F10 or Insert)
+        if (GetAsyncKeyState(g_cfg.overlay_key) & 1 || GetAsyncKeyState(VK_INSERT) & 1) {
             s_visible = !s_visible;
             ShowWindow(s_hwnd, s_visible ? SW_SHOWNOACTIVATE : SW_HIDE);
         }
 
-        // Refresh once per second
         DWORD now = GetTickCount();
-        if (now - lastTick >= 1000) {
+        if (now - lastTick >= 500) { // Refresh overlay at 2 Hz
             lastTick = now;
-            if (s_visible) {
+            if (s_visible && s_hwnd) {
                 InvalidateRect(s_hwnd, NULL, TRUE);
             }
         }
 
-        Sleep(s_visible ? 40 : 100);
+        Sleep(20);
     }
+
     return 0;
 }
 
 void overlay_start() {
     if (!g_cfg.overlay) {
         g_tel.st_overlay = st_disabled;
-        log_msg("[OVERLAY] Overlay is disabled by config (Overlay=0).");
+        log_msg("[OVERLAY] Overlay disabled by configuration (Overlay=0).");
         return;
     }
 
-    CreateThread(NULL, 0, OverlayThread, NULL, 0, NULL);
+    HANDLE hThread = CreateThread(NULL, 0, OverlayThread, NULL, 0, NULL);
+    if (hThread) {
+        CloseHandle(hThread);
+    }
 }

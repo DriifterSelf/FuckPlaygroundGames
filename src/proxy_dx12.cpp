@@ -1,4 +1,4 @@
-// D3D12 Feature Acceleration, Compute Offload & Particle Swizzle Hook
+// D3D12 Feature Acceleration & Compute Offload Hook
 #include <d3d12.h>
 #include <stdio.h>
 #include "proxy_common.h"
@@ -10,16 +10,9 @@ typedef HRESULT (STDMETHODCALLTYPE *PFN_CheckFeatureSupport)(
     UINT FeatureSupportDataSize
 );
 
-typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
-    ID3D12Device* This,
-    ID3D12Resource* pResource,
-    const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
-    D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
-);
-
 static PFN_CheckFeatureSupport s_orig_cfs = NULL;
-static PFN_CreateShaderResourceView s_orig_csrv = NULL;
 static uint64_t s_features_logged_mask = 0;
+static uint64_t s_injected_logged_mask = 0;
 
 static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
     ID3D12Device* This,
@@ -50,11 +43,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             g_tel.d3d12_bindless_tier3 = 1;
             g_tel.d3d12_single_pass_cubemaps = 1;
             g_tel.d3d12_rovs_oit = 1;
-            log_msg("[DX12] [INJECT] Enabled Bindless Tier 3, Single-Pass Cubemaps, and Hardware ROVs (OIT)");
+            if (!(s_injected_logged_mask & (1ULL << 0))) {
+                s_injected_logged_mask |= (1ULL << 0);
+                log_msg("[DX12] [INJECT] Enabled Bindless Tier 3, Single-Pass Cubemaps, and Hardware ROVs (OIT)");
+            }
             break;
         }
         case D3D12_FEATURE_FORMAT_SUPPORT: {
-            // Feature 3: Format support flags for compressed particle atlases & HDR buffers
+            // Feature 3: Full format support flags for compressed particle atlases & HDR buffers
+            // Guarantees all sampling and MIP flags so texture streaming never drops to debug placeholder colors!
             D3D12_FEATURE_DATA_FORMAT_SUPPORT* fs = (D3D12_FEATURE_DATA_FORMAT_SUPPORT*)pFeatureSupportData;
             if (fs->Format == DXGI_FORMAT_BC4_UNORM || fs->Format == DXGI_FORMAT_BC4_SNORM ||
                 fs->Format == DXGI_FORMAT_BC4_TYPELESS ||
@@ -79,52 +76,63 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                                  D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
                 fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
             }
+            g_tel.d3d12_format_support = 1;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS1: {
-            // WaveOps and Wave32/64 execution mode for AMD RDNA4
+            // Feature 8: WaveOps and Wave32/64 execution mode for AMD RDNA4
             D3D12_FEATURE_DATA_D3D12_OPTIONS1* opt1 = (D3D12_FEATURE_DATA_D3D12_OPTIONS1*)pFeatureSupportData;
             opt1->WaveOps = TRUE;
             opt1->WaveLaneCountMin = 32;
             opt1->WaveLaneCountMax = 64;
             opt1->TotalLaneCount = g_tel.num_cus * 64;
             g_tel.d3d12_wave_ops = 1;
-            log_msg("[DX12] [INJECT] Enabled WaveOps & Wave32 for RDNA4 (TotalLaneCount=%u)", opt1->TotalLaneCount);
+            if (!(s_injected_logged_mask & (1ULL << 8))) {
+                s_injected_logged_mask |= (1ULL << 8);
+                log_msg("[DX12] [INJECT] Enabled WaveOps & Wave32 for RDNA4 (TotalLaneCount=%u)", opt1->TotalLaneCount);
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS2: {
-            // Feature 18: GPU Depth Bounds Testing (Offloads light depth culling from CPU to GPU ROPs)
-            D3D12_FEATURE_DATA_D3D12_OPTIONS2* opt2 = (D3D12_FEATURE_DATA_D3D12_OPTIONS2*)pFeatureSupportData;
-            opt2->DepthBoundsTestSupported = TRUE;
-            g_tel.d3d12_depth_bounds = 1;
-            log_msg("[DX12] [INJECT] Enabled GPU Hardware Depth Bounds Testing for Light Culling");
+            // Feature 18: NOTE: We strictly preserve driver default DepthBoundsTestSupported.
+            // Enabling DepthBounds on ForzaTech with reversed-Z causes OMSetDepthBounds(near, far)
+            // where near > far to reject 100% of lighting volumes and black out the scene.
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS3: {
-            // Enable Async Copy Queue timestamps and casting for fast texture streaming
+            // Feature 21: Enable Async Copy Queue timestamps and casting for fast texture streaming
             D3D12_FEATURE_DATA_D3D12_OPTIONS3* opt3 = (D3D12_FEATURE_DATA_D3D12_OPTIONS3*)pFeatureSupportData;
             opt3->CopyQueueTimestampQueriesSupported = TRUE;
             opt3->CastingFullyTypedFormatSupported = TRUE;
             g_tel.d3d12_async_copy = 1;
-            log_msg("[DX12] [INJECT] Enabled Async Copy Queue & Typed Format Casting");
+            if (!(s_injected_logged_mask & (1ULL << 21))) {
+                s_injected_logged_mask |= (1ULL << 21);
+                log_msg("[DX12] [INJECT] Enabled Async Copy Queue & Typed Format Casting");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS4: {
             // Feature 23: Native 16-bit Float and Int operations (2x math rate on RDNA4 Compute Units)
             D3D12_FEATURE_DATA_D3D12_OPTIONS4* opt4 = (D3D12_FEATURE_DATA_D3D12_OPTIONS4*)pFeatureSupportData;
             opt4->Native16BitShaderOpsSupported = TRUE;
-            log_msg("[DX12] [INJECT] Enabled Native 16-bit Float/Int Shader Ops (2x Math Rate on RDNA4)");
+            if (!(s_injected_logged_mask & (1ULL << 23))) {
+                s_injected_logged_mask |= (1ULL << 23);
+                log_msg("[DX12] [INJECT] Enabled Native 16-bit Float/Int Shader Ops (2x Math Rate on RDNA4)");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
-            // Force Raytracing Tier 1.1 support for Inline Raytracing (RayQuery in Compute Shaders)
+            // Feature 27: Force Raytracing Tier 1.1 support for Inline Raytracing (RayQuery in Compute Shaders)
             D3D12_FEATURE_DATA_D3D12_OPTIONS5* opt5 = (D3D12_FEATURE_DATA_D3D12_OPTIONS5*)pFeatureSupportData;
             if (opt5->RaytracingTier < D3D12_RAYTRACING_TIER_1_1) {
                 opt5->RaytracingTier = D3D12_RAYTRACING_TIER_1_1;
             }
             opt5->RenderPassesTier = D3D12_RENDER_PASS_TIER_1;
             g_tel.d3d12_rayquery = 1;
-            log_msg("[DX12] [INJECT] Enabled DXR Tier 1.1 (Inline RayQuery in Compute Shaders)");
+            if (!(s_injected_logged_mask & (1ULL << 27))) {
+                s_injected_logged_mask |= (1ULL << 27);
+                log_msg("[DX12] [INJECT] Enabled DXR Tier 1.1 (Inline RayQuery in Compute Shaders)");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
@@ -136,14 +144,16 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt7->SamplerFeedbackTier = D3D12_SAMPLER_FEEDBACK_TIER_1_0;
             g_tel.d3d12_mesh_shader = 1;
             g_tel.d3d12_sampler_feedback = 1;
-            log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 & Sampler Feedback Tier 1.0 (Zero CPU Texture LOD Distance Math)");
+            if (!(s_injected_logged_mask & (1ULL << 32))) {
+                s_injected_logged_mask |= (1ULL << 32);
+                log_msg("[DX12] [INJECT] Enabled Mesh Shader Tier 1 & Sampler Feedback Tier 1.0 (GPU Cluster & Streaming Min-Map)");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS8: {
             // Feature 36: Unaligned Block Textures
             D3D12_FEATURE_DATA_D3D12_OPTIONS8* opt8 = (D3D12_FEATURE_DATA_D3D12_OPTIONS8*)pFeatureSupportData;
             opt8->UnalignedBlockTexturesSupported = TRUE;
-            log_msg("[DX12] [INJECT] Enabled Unaligned Block Textures Support");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS9: {
@@ -156,14 +166,16 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt9->DerivativesInMeshAndAmplificationShadersSupported = TRUE;
             opt9->WaveMMATier = D3D12_WAVE_MMA_TIER_1_0;
             g_tel.d3d12_gpu_atomics64 = 1;
-            log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics, WaveMMA, and Mesh Derivatives");
+            if (!(s_injected_logged_mask & (1ULL << 37))) {
+                s_injected_logged_mask |= (1ULL << 37);
+                log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics, WaveMMA, and Mesh Derivatives");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS11: {
             // Feature 40: 64-bit GPU Atomics on Descriptor Heap Resources
             D3D12_FEATURE_DATA_D3D12_OPTIONS11* opt11 = (D3D12_FEATURE_DATA_D3D12_OPTIONS11*)pFeatureSupportData;
             opt11->AtomicInt64OnDescriptorHeapResourceSupported = TRUE;
-            log_msg("[DX12] [INJECT] Enabled 64-bit GPU Atomics on Descriptor Heap Resources");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS12: {
@@ -172,53 +184,30 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt12->EnhancedBarriersSupported = TRUE;
             opt12->RelaxedFormatCastingSupported = TRUE;
             g_tel.d3d12_enhanced_barriers = 1;
-            log_msg("[DX12] [INJECT] Enabled Enhanced Barriers (Zero CPU Barrier Tracking)");
+            if (!(s_injected_logged_mask & (1ULL << 41))) {
+                s_injected_logged_mask |= (1ULL << 41);
+                log_msg("[DX12] [INJECT] Enabled Enhanced Barriers (Zero CPU Barrier Tracking)");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS13: {
-            // Feature 42: Unrestricted Vertex & Buffer Alignment
+            // Feature 42: Unrestricted Vertex & Buffer Alignment (Zero CPU Re-packing)
             D3D12_FEATURE_DATA_D3D12_OPTIONS13* opt13 = (D3D12_FEATURE_DATA_D3D12_OPTIONS13*)pFeatureSupportData;
             opt13->UnrestrictedBufferTextureCopyPitchSupported = TRUE;
             opt13->UnrestrictedVertexElementAlignmentSupported = TRUE;
-            opt13->InvertedViewportHeightFlipsYSupported = TRUE;
-            opt13->InvertedViewportDepthFlipsZSupported = TRUE;
             opt13->TextureCopyBetweenDimensionsSupported = TRUE;
             opt13->AlphaBlendFactorSupported = TRUE;
-            log_msg("[DX12] [INJECT] Enabled Unrestricted Vertex/Texture Alignment (Zero CPU Re-packing)");
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS16: {
-            // Feature 47: GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero Staging Copies)
+            // Feature 45: GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero Staging Copies)
             D3D12_FEATURE_DATA_D3D12_OPTIONS16* opt16 = (D3D12_FEATURE_DATA_D3D12_OPTIONS16*)pFeatureSupportData;
-            opt16->DynamicDepthBiasSupported = TRUE;
             opt16->GPUUploadHeapSupported = TRUE;
             g_tel.d3d12_gpu_upload_heap = 1;
-            log_msg("[DX12] [INJECT] Enabled GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero CPU Staging Memory Copies)");
-            break;
-        }
-        case D3D12_FEATURE_D3D12_OPTIONS21: {
-            // Feature 53: ExecuteIndirect Tier 1.1 & Work Graphs Tier 1.0 (Full GPU-Driven Pipeline)
-            D3D12_FEATURE_DATA_D3D12_OPTIONS21* opt21 = (D3D12_FEATURE_DATA_D3D12_OPTIONS21*)pFeatureSupportData;
-            opt21->WorkGraphsTier = D3D12_WORK_GRAPHS_TIER_1_0;
-            opt21->ExecuteIndirectTier = D3D12_EXECUTE_INDIRECT_TIER_1_1;
-            opt21->SampleCmpGradientAndBiasSupported = TRUE;
-            opt21->ExtendedCommandInfoSupported = TRUE;
-            g_tel.d3d12_execute_indirect_1_1 = 1;
-            g_tel.d3d12_work_graphs = 1;
-            log_msg("[DX12] [INJECT] Enabled ExecuteIndirect Tier 1.1 & Work Graphs Tier 1.0 (Full GPU-Driven Pipeline)");
-            break;
-        }
-        case D3D12_FEATURE_PREDICATION: {
-            D3D12_FEATURE_DATA_PREDICATION* pred = (D3D12_FEATURE_DATA_PREDICATION*)pFeatureSupportData;
-            pred->Supported = TRUE;
-            g_tel.d3d12_predication = 1;
-            log_msg("[DX12] [INJECT] Enabled Hardware GPU Predication (Direct Occlusion Drop in Pipeline)");
-            break;
-        }
-        case D3D12_FEATURE_HARDWARE_COPY: {
-            D3D12_FEATURE_DATA_HARDWARE_COPY* hwCopy = (D3D12_FEATURE_DATA_HARDWARE_COPY*)pFeatureSupportData;
-            hwCopy->Supported = TRUE;
-            log_msg("[DX12] [INJECT] Enabled Hardware Copy Queue Acceleration");
+            if (!(s_injected_logged_mask & (1ULL << 45))) {
+                s_injected_logged_mask |= (1ULL << 45);
+                log_msg("[DX12] [INJECT] Enabled GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero CPU Staging Copies)");
+            }
             break;
         }
         default:
@@ -226,107 +215,6 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         }
     }
     return hr;
-}
-
-// Particle Texture Swizzle & Fallback Fix Hook:
-// Intercepts SRV creation. In ForzaTech, single-channel particle smoke textures (BC4/R8)
-// and 2-channel flow vectors (BC5) created with default swizzle (0, 1, 2, 3) lack G/B channels,
-// causing shaders sampling .rgb to produce neon RED (R,0,0) or neon YELLOW (R,G,0).
-// By replicating R to (R,R,R,R) for 1-channel textures and neutralizing Blue for 2-channel textures,
-// particles sample as pure neutral volumetric luminance regardless of engine texture streaming delays!
-static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
-    ID3D12Device* This,
-    ID3D12Resource* pResource,
-    const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
-    D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
-) {
-    if (!pDesc) {
-        if (pResource) {
-            D3D12_RESOURCE_DESC rdesc = pResource->GetDesc();
-            DXGI_FORMAT fmt = rdesc.Format;
-
-            if (fmt == DXGI_FORMAT_BC4_UNORM || fmt == DXGI_FORMAT_BC4_SNORM || fmt == DXGI_FORMAT_BC4_TYPELESS ||
-                fmt == DXGI_FORMAT_R8_UNORM || fmt == DXGI_FORMAT_R8_SNORM || fmt == DXGI_FORMAT_R8_TYPELESS ||
-                fmt == DXGI_FORMAT_R16_UNORM || fmt == DXGI_FORMAT_R16_SNORM || fmt == DXGI_FORMAT_R16_FLOAT || fmt == DXGI_FORMAT_R16_TYPELESS)
-            {
-                D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-                desc.Format = (fmt == DXGI_FORMAT_BC4_TYPELESS) ? DXGI_FORMAT_BC4_UNORM :
-                              (fmt == DXGI_FORMAT_R8_TYPELESS) ? DXGI_FORMAT_R8_UNORM :
-                              (fmt == DXGI_FORMAT_R16_TYPELESS) ? DXGI_FORMAT_R16_FLOAT : fmt;
-                desc.ViewDimension = (rdesc.DepthOrArraySize > 1) ? D3D12_SRV_DIMENSION_TEXTURE2DARRAY : D3D12_SRV_DIMENSION_TEXTURE2D;
-                // Replicate R -> (R, R, R, R)
-                desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-                if (desc.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D) {
-                    desc.Texture2D.MostDetailedMip = 0;
-                    desc.Texture2D.MipLevels = rdesc.MipLevels;
-                    desc.Texture2D.PlaneSlice = 0;
-                    desc.Texture2D.ResourceMinLODClamp = 0.0f;
-                } else {
-                    desc.Texture2DArray.MostDetailedMip = 0;
-                    desc.Texture2DArray.MipLevels = rdesc.MipLevels;
-                    desc.Texture2DArray.FirstArraySlice = 0;
-                    desc.Texture2DArray.ArraySize = rdesc.DepthOrArraySize;
-                    desc.Texture2DArray.PlaneSlice = 0;
-                    desc.Texture2DArray.ResourceMinLODClamp = 0.0f;
-                }
-                InterlockedIncrement(&g_tel.d3d12_particle_fixes);
-                s_orig_csrv(This, pResource, &desc, DestDescriptor);
-                return;
-            }
-        }
-        s_orig_csrv(This, pResource, pDesc, DestDescriptor);
-        return;
-    }
-
-    D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
-    bool modified = false;
-
-    // 1. Single-channel density & smoke textures (BC4, R8, R16)
-    // Default mapping (0, 1, 2, 3) -> Green=0, Blue=0 -> pure NEON RED smoke.
-    // Fix: Replicate Red across all 4 components -> Grayscale volumetric smoke.
-    if (desc_copy.Format == DXGI_FORMAT_BC4_UNORM || 
-        desc_copy.Format == DXGI_FORMAT_BC4_SNORM || 
-        desc_copy.Format == DXGI_FORMAT_BC4_TYPELESS ||
-        desc_copy.Format == DXGI_FORMAT_R8_UNORM ||
-        desc_copy.Format == DXGI_FORMAT_R8_SNORM ||
-        desc_copy.Format == DXGI_FORMAT_R8_TYPELESS ||
-        desc_copy.Format == DXGI_FORMAT_R16_UNORM ||
-        desc_copy.Format == DXGI_FORMAT_R16_SNORM ||
-        desc_copy.Format == DXGI_FORMAT_R16_FLOAT ||
-        desc_copy.Format == DXGI_FORMAT_R16_TYPELESS)
-    {
-        if (desc_copy.Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
-            desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-            modified = true;
-        }
-    }
-    // 2. Alpha-only mask textures (A8_UNORM)
-    else if (desc_copy.Format == DXGI_FORMAT_A8_UNORM)
-    {
-        if (desc_copy.Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
-            desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(3, 3, 3, 3);
-            modified = true;
-        }
-    }
-    // 3. Two-channel flow & velocity particle textures (BC5, R8G8)
-    // Default mapping (0, 1, 2, 3) -> Blue=0 -> pure NEON YELLOW (Red + Green).
-    // Fix: Map Blue to Component 0 (Red) while keeping .xy intact for normal maps.
-    else if (desc_copy.Format == DXGI_FORMAT_BC5_UNORM || 
-             desc_copy.Format == DXGI_FORMAT_BC5_SNORM || 
-             desc_copy.Format == DXGI_FORMAT_BC5_TYPELESS ||
-             desc_copy.Format == DXGI_FORMAT_R8G8_UNORM ||
-             desc_copy.Format == DXGI_FORMAT_R8G8_SNORM)
-    {
-        if (desc_copy.Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
-            desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 1, 0, 1);
-            modified = true;
-        }
-    }
-
-    if (modified) {
-        InterlockedIncrement(&g_tel.d3d12_particle_fixes);
-    }
-    s_orig_csrv(This, pResource, modified ? &desc_copy : pDesc, DestDescriptor);
 }
 
 void dx12_hook_install(ID3D12Device* pDevice) {
@@ -345,19 +233,6 @@ void dx12_hook_install(ID3D12Device* pDevice) {
             log_msg("[DX12] Successfully hooked ID3D12Device::CheckFeatureSupport (vtbl[13]).");
         } else {
             log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CheckFeatureSupport.");
-        }
-    }
-
-    // CreateShaderResourceView is method index 18 in ID3D12DeviceVtbl (offset 144 bytes = 18 * 8)
-    if (vtbl[18] != (void*)Hook_CreateShaderResourceView) {
-        DWORD oldProtect;
-        if (VirtualProtect(&vtbl[18], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            s_orig_csrv = (PFN_CreateShaderResourceView)vtbl[18];
-            vtbl[18] = (void*)Hook_CreateShaderResourceView;
-            VirtualProtect(&vtbl[18], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[DX12] Successfully hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Swizzle Fix.");
-        } else {
-            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CreateShaderResourceView.");
         }
     }
 }
