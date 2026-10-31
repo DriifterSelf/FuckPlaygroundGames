@@ -157,17 +157,23 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     }
                                 }
 
-                                // DYNAMIC SCHEDULING RULE:
-                                // 1. Frame-critical simulation, render submission, and job workers (tpBasePri >= 1):
-                                //    -> Always anchor to P-Cores (0x0FFF) so they run at 4.6 GHz with full AVX2 throughput.
-                                // 2. Background streaming, audio decompression, disk I/O, and worker overflow (tpBasePri <= 0):
-                                //    -> Unleash to all cores including E-Cores (0xFFFF) so E-Cores assist without blocking P-Cores.
-                                if (te.tpBasePri >= 1) {
+                                // DYNAMIC 8ms SCHEDULING RULE:
+                                // 1. Elevated-priority threads (tpBasePri >= 10: main loop, render submission, audio)
+                                //    MUST ALWAYS remain on P-Cores (0x0FFF) at 4.6 GHz to prevent convoy stalls.
+                                // 2. Heavy sustained background workers (frameWorkMs > ECoreThresholdMs, e.g. > 8ms):
+                                //    Offloaded directly to E-Cores (0xF000) so Oodle decompression and chunk streaming
+                                //    chew through background work without stealing cycles or cache from P-Cores.
+                                // 3. Interactive/lightweight workers (frameWorkMs <= ECoreThresholdMs):
+                                //    Pinned to P-Cores (0x0FFF) for low latency.
+                                if (te.tpBasePri >= 10) {
                                     SetThreadAffinityMask(hThread, s_p_core_mask);
                                     pCorePinned++;
-                                } else {
-                                    SetThreadAffinityMask(hThread, s_all_cores_mask);
+                                } else if (frameWorkMs > (float)g_cfg.ecore_threshold_ms) {
+                                    SetThreadAffinityMask(hThread, s_e_core_mask);
                                     eCoreActive++;
+                                } else {
+                                    SetThreadAffinityMask(hThread, s_p_core_mask);
+                                    pCorePinned++;
                                 }
 
                                 CloseHandle(hThread);
