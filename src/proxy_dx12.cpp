@@ -1,4 +1,4 @@
-// D3D12 Feature Acceleration & Compute Offload Hook
+// D3D12 Feature Acceleration, Compute Offload & Particle Swizzle Hook
 #include <d3d12.h>
 #include <stdio.h>
 #include "proxy_common.h"
@@ -10,7 +10,15 @@ typedef HRESULT (STDMETHODCALLTYPE *PFN_CheckFeatureSupport)(
     UINT FeatureSupportDataSize
 );
 
+typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
+    ID3D12Device* This,
+    ID3D12Resource* pResource,
+    const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
+    D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
+);
+
 static PFN_CheckFeatureSupport s_orig_cfs = NULL;
+static PFN_CreateShaderResourceView s_orig_csrv = NULL;
 static uint64_t s_features_logged_mask = 0;
 static uint64_t s_injected_logged_mask = 0;
 
@@ -217,6 +225,55 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
     return hr;
 }
 
+// Particle Texture Swizzle Fix:
+// Targets ONLY single-channel BC4 compressed smoke/dust/particle atlases.
+// In D3D12 default mapping (0, 1, 2, 3), Green=0 and Blue=0, turning single-channel smoke into neon RED (R, 0, 0, 1).
+// By replicating Red across all 4 channels (0, 0, 0, 0), it samples as clean neutral grayscale smoke.
+// IMPORTANT: BC5 (normal maps) and R16/R32 (shadow/depth maps) are NEVER touched, ensuring 100% lighting integrity!
+static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
+    ID3D12Device* This,
+    ID3D12Resource* pResource,
+    const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
+    D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
+) {
+    if (pDesc) {
+        if ((pDesc->Format == DXGI_FORMAT_BC4_UNORM || pDesc->Format == DXGI_FORMAT_BC4_SNORM) &&
+            pDesc->Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING)
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
+            desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
+            InterlockedIncrement(&g_tel.d3d12_particle_fixes);
+            s_orig_csrv(This, pResource, &desc_copy, DestDescriptor);
+            return;
+        }
+    } else if (pResource) {
+        D3D12_RESOURCE_DESC rdesc = pResource->GetDesc();
+        if (rdesc.Format == DXGI_FORMAT_BC4_UNORM || rdesc.Format == DXGI_FORMAT_BC4_SNORM) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC local_desc = {};
+            local_desc.Format = rdesc.Format;
+            local_desc.ViewDimension = (rdesc.DepthOrArraySize > 1) ? D3D12_SRV_DIMENSION_TEXTURE2DARRAY : D3D12_SRV_DIMENSION_TEXTURE2D;
+            local_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
+            if (local_desc.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D) {
+                local_desc.Texture2D.MostDetailedMip = 0;
+                local_desc.Texture2D.MipLevels = rdesc.MipLevels;
+                local_desc.Texture2D.PlaneSlice = 0;
+                local_desc.Texture2D.ResourceMinLODClamp = 0.0f;
+            } else {
+                local_desc.Texture2DArray.MostDetailedMip = 0;
+                local_desc.Texture2DArray.MipLevels = rdesc.MipLevels;
+                local_desc.Texture2DArray.FirstArraySlice = 0;
+                local_desc.Texture2DArray.ArraySize = rdesc.DepthOrArraySize;
+                local_desc.Texture2DArray.PlaneSlice = 0;
+                local_desc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+            }
+            InterlockedIncrement(&g_tel.d3d12_particle_fixes);
+            s_orig_csrv(This, pResource, &local_desc, DestDescriptor);
+            return;
+        }
+    }
+    s_orig_csrv(This, pResource, pDesc, DestDescriptor);
+}
+
 void dx12_hook_install(ID3D12Device* pDevice) {
     if (!pDevice) return;
 
@@ -233,6 +290,19 @@ void dx12_hook_install(ID3D12Device* pDevice) {
             log_msg("[DX12] Successfully hooked ID3D12Device::CheckFeatureSupport (vtbl[13]).");
         } else {
             log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CheckFeatureSupport.");
+        }
+    }
+
+    // CreateShaderResourceView is method index 18 in ID3D12DeviceVtbl (offset 144 bytes = 18 * 8)
+    if (vtbl[18] != (void*)Hook_CreateShaderResourceView) {
+        DWORD oldProtect;
+        if (VirtualProtect(&vtbl[18], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            s_orig_csrv = (PFN_CreateShaderResourceView)vtbl[18];
+            vtbl[18] = (void*)Hook_CreateShaderResourceView;
+            VirtualProtect(&vtbl[18], sizeof(void*), oldProtect, &oldProtect);
+            log_msg("[DX12] Successfully hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Swizzle Fix.");
+        } else {
+            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CreateShaderResourceView.");
         }
     }
 }

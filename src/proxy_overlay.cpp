@@ -138,7 +138,14 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
         y += step;
 
-        // 3i. Async Copy Queue & Particle Support
+        // 3i. Particle Swizzle Fix
+        char partBuf[140];
+        sprintf_s(partBuf, " |-- Particle Swizzle Fix: [ACTIVE] (%ld SRVs corregidos)", g_tel.d3d12_particle_fixes);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
+        y += step;
+
+        // 3j. Async Copy Queue & Particle Support
         char copyBuf[140];
         sprintf_s(copyBuf, " \\-- Async Copy Queue: [ACTIVE] (Direct DMA Texture Streaming)");
         SetTextColor(hdc, RGB(70, 240, 140));
@@ -231,7 +238,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 580, 295,
+        25, 25, 580, 310,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
