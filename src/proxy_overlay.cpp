@@ -175,14 +175,21 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, predBuf, (int)strlen(predBuf));
         y += step;
 
-        // 3m. Sampler Feedback
+        // 3m. Placed Resources & Displayable Textures (Kernel Bypass)
+        char plcBuf[140];
+        sprintf_s(plcBuf, " |-- Placed Heaps & Display: [ACTIVE] (Zero-Kernel Alloc & Direct Scanout)");
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, plcBuf, (int)strlen(plcBuf));
+        y += step;
+
+        // 3n. Sampler Feedback
         char fbBuf[140];
         sprintf_s(fbBuf, " |-- Sampler Feedback: [ACTIVE] (Hardware Streaming Min-Map)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
         y += step;
 
-        // 3n. Particle Swizzle Fix
+        // 3o. Particle Swizzle Fix
         char partBuf[140];
         sprintf_s(partBuf, " |-- Particle Swizzle: [ACTIVE] (%ld fixes / %ld BC4 hits / %ld passed)",
                   g_tel.d3d12_particle_fixes, g_tel.d3d12_particle_fixes, g_tel.d3d12_srv_passed);
@@ -190,18 +197,18 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
 
-        // 3o. Async Copy Queue & Particle Support
+        // 3p. Async Copy Queue & Particle Support
         char copyBuf[140];
         sprintf_s(copyBuf, " \\-- Async Copy Queue: [ACTIVE] (Direct DMA Texture Streaming)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
 
-        // 4. Dynamic CPU Governor (8ms Threshold)
+        // 4. Dynamic CPU Governor (8ms Threshold) + MMCSS
         char schedBuf[160];
         if (g_cfg.hybrid_governor) {
-            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core <=8ms | %ld E-Core >8ms | %ld migrations)",
-                      g_tel.heavy_threads_pinned, g_tel.ecore_threads_active, g_tel.sched_migrations);
+            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core <=8ms | %ld E-Core >8ms | MMCSS %s)",
+                      g_tel.heavy_threads_pinned, g_tel.ecore_threads_active, g_tel.mmcss_active ? "Games" : "Default");
             SetTextColor(hdc, RGB(70, 240, 140));
         } else {
             sprintf_s(schedBuf, "[+] CPU Governor: [DISABLED by INI]");
@@ -282,7 +289,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 640, 395,
+        25, 25, 640, 415,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 

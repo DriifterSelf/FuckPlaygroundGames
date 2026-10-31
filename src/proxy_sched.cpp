@@ -101,12 +101,41 @@ static void DetectHybridTopology() {
     free(buffer);
 }
 
+typedef HANDLE (WINAPI *PFN_AvSetMmThreadCharacteristicsA)(LPCSTR TaskName, LPDWORD TaskIndex);
+static PFN_AvSetMmThreadCharacteristicsA s_pfnAvSet = NULL;
+static bool s_avrt_loaded = false;
+
+static void InitMMCSS() {
+    if (!s_avrt_loaded) {
+        s_avrt_loaded = true;
+        HMODULE hAvrt = LoadLibraryA("avrt.dll");
+        if (hAvrt) {
+            s_pfnAvSet = (PFN_AvSetMmThreadCharacteristicsA)GetProcAddress(hAvrt, "AvSetMmThreadCharacteristicsA");
+            if (s_pfnAvSet) {
+                DWORD taskIndex = 0;
+                HANDLE hTask = s_pfnAvSet("Games", &taskIndex);
+                if (hTask) {
+                    g_tel.mmcss_active = 1;
+                    log_msg("[SCHED] MMCSS registered with 'Games' profile (Realtime OS scheduling quantum guaranteed).");
+                }
+            }
+        }
+    }
+}
+
 // Dynamic Anti-Stutter Governor Thread:
 // 1. Keeps process affinity mask at 0xFFFF to utilize all 16 cores
 // 2. Pins frame-critical interactive threads (<= 8ms) to P-Cores to prevent convoy stall
 // 3. Allows sustained heavy / background threads (> 8ms) to offload onto E-Cores for full parallel power
+// 4. Elevates process priority class to HIGH_PRIORITY_CLASS to prevent Windows OS preemption
 static DWORD WINAPI GovernorThread(LPVOID) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+
+    // Elevate process priority to HIGH_PRIORITY_CLASS
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetProcessPriorityBoost(GetCurrentProcess(), FALSE);
+
+    InitMMCSS();
 
     DWORD pid = GetCurrentProcessId();
 

@@ -214,6 +214,27 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
             break;
         }
+        case D3D12_FEATURE_SERIALIZATION: {
+            // Feature 24: Direct VRAM Heap Serialization Tier 10
+            D3D12_FEATURE_DATA_SERIALIZATION* ser = (D3D12_FEATURE_DATA_SERIALIZATION*)pFeatureSupportData;
+            ser->HeapSerializationTier = D3D12_HEAP_SERIALIZATION_TIER_10;
+            break;
+        }
+        case D3D12_FEATURE_CROSS_NODE: {
+            // Feature 25: Discrete Single-Node GPU
+            D3D12_FEATURE_DATA_CROSS_NODE* cn = (D3D12_FEATURE_DATA_CROSS_NODE*)pFeatureSupportData;
+            cn->SharingTier = D3D12_CROSS_NODE_SHARING_TIER_NOT_SUPPORTED;
+            cn->AtomicShaderInstructions = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_DISPLAYABLE: {
+            // Feature 28: Direct Scanout from Render Surfaces (Zero-Copy SwapChain Blit)
+            D3D12_FEATURE_DATA_DISPLAYABLE* disp = (D3D12_FEATURE_DATA_DISPLAYABLE*)pFeatureSupportData;
+            disp->DisplayableTexture = TRUE;
+            disp->SharedResourceCompatibilityTier = D3D12_SHARED_RESOURCE_COMPATIBILITY_TIER_2;
+            g_tel.d3d12_displayable = 1;
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
             // Feature 27: Force Raytracing Tier 1.1 support for Inline Raytracing (RayQuery in Compute Shaders)
             D3D12_FEATURE_DATA_D3D12_OPTIONS5* opt5 = (D3D12_FEATURE_DATA_D3D12_OPTIONS5*)pFeatureSupportData;
@@ -370,8 +391,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
             break;
         }
+        case D3D12_FEATURE_PLACED_RESOURCE_SUPPORT_INFO: {
+            // Feature 51: Suballocated Placed Resources (Zero Kernel Page Mapping Stalls)
+            D3D12_FEATURE_DATA_PLACED_RESOURCE_SUPPORT_INFO* pr = (D3D12_FEATURE_DATA_PLACED_RESOURCE_SUPPORT_INFO*)pFeatureSupportData;
+            pr->Supported = TRUE;
+            g_tel.d3d12_placed_resources = 1;
+            break;
+        }
         case D3D12_FEATURE_HARDWARE_COPY: {
-            // Feature 51: Dedicated DMA Hardware Copy
+            // Feature 52: Dedicated DMA Hardware Copy
             D3D12_FEATURE_DATA_HARDWARE_COPY* hwcopy = (D3D12_FEATURE_DATA_HARDWARE_COPY*)pFeatureSupportData;
             hwcopy->Supported = TRUE;
             break;
