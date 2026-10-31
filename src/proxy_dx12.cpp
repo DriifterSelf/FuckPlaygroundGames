@@ -59,10 +59,45 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_FORMAT_SUPPORT: {
-            // Feature 3: Full format support flags for compressed particle atlases & HDR buffers
-            // Guarantees all sampling and MIP flags so texture streaming never drops to debug placeholder colors!
+            // Feature 3: Full format support flags for compressed particle atlases, HDR buffers,
+            // Hi-Z depth downsampling pyramids, and Compute Skinning vertex buffers.
             D3D12_FEATURE_DATA_FORMAT_SUPPORT* fs = (D3D12_FEATURE_DATA_FORMAT_SUPPORT*)pFeatureSupportData;
-            if (fs->Format == DXGI_FORMAT_BC4_UNORM || fs->Format == DXGI_FORMAT_BC4_SNORM ||
+
+            // Hi-Z Depth Buffer & Mip Pyramid Formats
+            bool is_depth_hiz = (
+                fs->Format == DXGI_FORMAT_R32_FLOAT || fs->Format == DXGI_FORMAT_R32_TYPELESS ||
+                fs->Format == DXGI_FORMAT_D32_FLOAT || fs->Format == DXGI_FORMAT_D32_FLOAT_S8X24_UINT ||
+                fs->Format == DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS || fs->Format == DXGI_FORMAT_X32_TYPELESS_G8X24_UINT ||
+                fs->Format == DXGI_FORMAT_R32_UINT ||
+                fs->Format == DXGI_FORMAT_R16_FLOAT || fs->Format == DXGI_FORMAT_R16_TYPELESS ||
+                fs->Format == DXGI_FORMAT_D16_UNORM || fs->Format == DXGI_FORMAT_R16_UNORM ||
+                fs->Format == DXGI_FORMAT_R16_UINT ||
+                fs->Format == DXGI_FORMAT_R24G8_TYPELESS || fs->Format == DXGI_FORMAT_D24_UNORM_S8_UINT ||
+                fs->Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS || fs->Format == DXGI_FORMAT_X24_TYPELESS_G8_UINT
+            );
+            if (is_depth_hiz) {
+                g_tel.d3d12_hiz_culling = 1;
+                InterlockedIncrement(&g_tel.d3d12_hiz_queries);
+            }
+
+            // Compute Skinning & Vertex Deformation Formats (Body Flex, Wing Flex, Tyre Deformation)
+            bool is_skinning_deform = (
+                fs->Format == DXGI_FORMAT_R32G32B32A32_FLOAT || fs->Format == DXGI_FORMAT_R32G32B32A32_TYPELESS || fs->Format == DXGI_FORMAT_R32G32B32A32_UINT ||
+                fs->Format == DXGI_FORMAT_R32G32B32_FLOAT || fs->Format == DXGI_FORMAT_R32G32B32_TYPELESS || fs->Format == DXGI_FORMAT_R32G32B32_UINT ||
+                fs->Format == DXGI_FORMAT_R16G16B16A16_FLOAT || fs->Format == DXGI_FORMAT_R16G16B16A16_TYPELESS || fs->Format == DXGI_FORMAT_R16G16B16A16_SNORM ||
+                fs->Format == DXGI_FORMAT_R16G16B16A16_UNORM || fs->Format == DXGI_FORMAT_R16G16B16A16_UINT ||
+                fs->Format == DXGI_FORMAT_R32G32_FLOAT || fs->Format == DXGI_FORMAT_R32G32_TYPELESS || fs->Format == DXGI_FORMAT_R32G32_UINT ||
+                fs->Format == DXGI_FORMAT_R16G16_FLOAT || fs->Format == DXGI_FORMAT_R16G16_TYPELESS || fs->Format == DXGI_FORMAT_R16G16_SNORM ||
+                fs->Format == DXGI_FORMAT_R16G16_UNORM || fs->Format == DXGI_FORMAT_R16G16_UINT ||
+                fs->Format == DXGI_FORMAT_R10G10B10A2_UNORM || fs->Format == DXGI_FORMAT_R10G10B10A2_TYPELESS || fs->Format == DXGI_FORMAT_R10G10B10A2_UINT
+            );
+            if (is_skinning_deform) {
+                g_tel.d3d12_compute_skinning = 1;
+                InterlockedIncrement(&g_tel.d3d12_skinning_queries);
+            }
+
+            if (is_depth_hiz || is_skinning_deform ||
+                fs->Format == DXGI_FORMAT_BC4_UNORM || fs->Format == DXGI_FORMAT_BC4_SNORM ||
                 fs->Format == DXGI_FORMAT_BC4_TYPELESS ||
                 fs->Format == DXGI_FORMAT_BC5_UNORM || fs->Format == DXGI_FORMAT_BC5_SNORM ||
                 fs->Format == DXGI_FORMAT_BC5_TYPELESS ||
@@ -72,11 +107,11 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 fs->Format == DXGI_FORMAT_R8_UNORM || fs->Format == DXGI_FORMAT_R8_SNORM ||
                 fs->Format == DXGI_FORMAT_R8G8_UNORM || fs->Format == DXGI_FORMAT_R8G8_SNORM ||
                 fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM || fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                fs->Format == DXGI_FORMAT_R16_UNORM || fs->Format == DXGI_FORMAT_R16_SNORM ||
-                fs->Format == DXGI_FORMAT_R16_FLOAT ||
-                fs->Format == DXGI_FORMAT_R16G16B16A16_FLOAT || fs->Format == DXGI_FORMAT_R11G11B10_FLOAT)
+                fs->Format == DXGI_FORMAT_R11G11B10_FLOAT)
             {
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_BUFFER |
+                                 D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER |
+                                 D3D12_FORMAT_SUPPORT1_TEXTURE2D |
                                  D3D12_FORMAT_SUPPORT1_TEXTURE3D |
                                  D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
                                  D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
@@ -86,6 +121,22 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
             }
             g_tel.d3d12_format_support = 1;
+            break;
+        }
+        case D3D12_FEATURE_SHADER_MODEL: {
+            // Feature 7: Force Shader Model 6.6+ for Native Resource Indexing & Compute WaveOps
+            D3D12_FEATURE_DATA_SHADER_MODEL* sm = (D3D12_FEATURE_DATA_SHADER_MODEL*)pFeatureSupportData;
+            if (sm->HighestShaderModel < D3D_SHADER_MODEL_6_6) {
+                sm->HighestShaderModel = D3D_SHADER_MODEL_6_6;
+            }
+            break;
+        }
+        case D3D12_FEATURE_ROOT_SIGNATURE: {
+            // Feature 12: Root Signature 1.1 Support for Direct Descriptor Indexing
+            D3D12_FEATURE_DATA_ROOT_SIGNATURE* rs = (D3D12_FEATURE_DATA_ROOT_SIGNATURE*)pFeatureSupportData;
+            if (rs->HighestVersion < D3D_ROOT_SIGNATURE_VERSION_1_1) {
+                rs->HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -108,6 +159,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             // where near > far to reject 100% of lighting volumes and black out the scene.
             break;
         }
+        case D3D12_FEATURE_SHADER_CACHE: {
+            // Feature 19: Full Hardware Pipeline State Object (PSO) & Shader Library Disk/In-Proc Cache
+            D3D12_FEATURE_DATA_SHADER_CACHE* sc = (D3D12_FEATURE_DATA_SHADER_CACHE*)pFeatureSupportData;
+            sc->SupportFlags |= (D3D12_SHADER_CACHE_SUPPORT_SINGLE_PSO |
+                                 D3D12_SHADER_CACHE_SUPPORT_LIBRARY |
+                                 D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_INPROC_CACHE |
+                                 D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_DISK_CACHE);
+            break;
+        }
         case D3D12_FEATURE_COMMAND_QUEUE_PRIORITY: {
             // Feature 20: Realtime Async Compute Queue for Hardware Audio Simulation & Ray Tracing
             // Enables the engine (ForzaTech/Wwise) to dispatch low-latency sound propagation,
@@ -124,6 +184,12 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             } else {
                 injected = false;
             }
+            break;
+        }
+        case D3D12_FEATURE_EXISTING_HEAPS: {
+            // Feature 22: Existing Heaps for Fast VRAM Buffer Mapping
+            D3D12_FEATURE_DATA_EXISTING_HEAPS* eh = (D3D12_FEATURE_DATA_EXISTING_HEAPS*)pFeatureSupportData;
+            eh->Supported = TRUE;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS3: {
@@ -160,6 +226,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 s_injected_logged_mask |= (1ULL << 27);
                 log_msg("[DX12] [INJECT] Enabled DXR Tier 1.1 (Inline RayQuery in Compute Shaders)");
             }
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS6: {
+            // Feature 30: Variable Rate Shading Tier 2 & Background Processing
+            D3D12_FEATURE_DATA_D3D12_OPTIONS6* opt6 = (D3D12_FEATURE_DATA_D3D12_OPTIONS6*)pFeatureSupportData;
+            opt6->AdditionalShadingRatesSupported = TRUE;
+            opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = TRUE;
+            opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
+            opt6->BackgroundProcessingSupported = TRUE;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
@@ -199,6 +274,13 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS10: {
+            // Feature 39: Mesh Shader Shading Rate & Combiner for GPU Deformation & Skinning
+            D3D12_FEATURE_DATA_D3D12_OPTIONS10* opt10 = (D3D12_FEATURE_DATA_D3D12_OPTIONS10*)pFeatureSupportData;
+            opt10->VariableRateShadingSumCombinerSupported = TRUE;
+            opt10->MeshShaderPerPrimitiveShadingRateSupported = TRUE;
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS11: {
             // Feature 40: 64-bit GPU Atomics on Descriptor Heap Resources
             D3D12_FEATURE_DATA_D3D12_OPTIONS11* opt11 = (D3D12_FEATURE_DATA_D3D12_OPTIONS11*)pFeatureSupportData;
@@ -226,6 +308,21 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt13->AlphaBlendFactorSupported = TRUE;
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS14: {
+            // Feature 43: Advanced Texture Ops & Writeable MSAA
+            D3D12_FEATURE_DATA_D3D12_OPTIONS14* opt14 = (D3D12_FEATURE_DATA_D3D12_OPTIONS14*)pFeatureSupportData;
+            opt14->AdvancedTextureOpsSupported = TRUE;
+            opt14->WriteableMSAATexturesSupported = TRUE;
+            opt14->IndependentFrontAndBackStencilRefMaskSupported = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS15: {
+            // Feature 44: Triangle Fan & Dynamic Index Buffer Strip Cut
+            D3D12_FEATURE_DATA_D3D12_OPTIONS15* opt15 = (D3D12_FEATURE_DATA_D3D12_OPTIONS15*)pFeatureSupportData;
+            opt15->TriangleFanSupported = TRUE;
+            opt15->DynamicIndexBufferStripCutSupported = TRUE;
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS16: {
             // Feature 45: GPU Upload Heaps (Direct ReBAR VRAM Writes - Zero Staging Copies)
             D3D12_FEATURE_DATA_D3D12_OPTIONS16* opt16 = (D3D12_FEATURE_DATA_D3D12_OPTIONS16*)pFeatureSupportData;
@@ -237,10 +334,29 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             }
             break;
         }
+        case D3D12_FEATURE_D3D12_OPTIONS17: {
+            // Feature 46: Non-Normalized Coordinate Samplers for Direct Hi-Z Texel Sampling
+            D3D12_FEATURE_DATA_D3D12_OPTIONS17* opt17 = (D3D12_FEATURE_DATA_D3D12_OPTIONS17*)pFeatureSupportData;
+            opt17->NonNormalizedCoordinateSamplersSupported = TRUE;
+            opt17->ManualWriteTrackingResourceSupported = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS18: {
+            // Feature 47: Render Passes Valid
+            D3D12_FEATURE_DATA_D3D12_OPTIONS18* opt18 = (D3D12_FEATURE_DATA_D3D12_OPTIONS18*)pFeatureSupportData;
+            opt18->RenderPassesValid = TRUE;
+            break;
+        }
         case D3D12_FEATURE_D3D12_OPTIONS19: {
             // Feature 48: Compute-Only Custom Heaps for Audio Buffer & Acceleration Structures
             D3D12_FEATURE_DATA_D3D12_OPTIONS19* opt19 = (D3D12_FEATURE_DATA_D3D12_OPTIONS19*)pFeatureSupportData;
             opt19->ComputeOnlyCustomHeapSupported = TRUE;
+            break;
+        }
+        case D3D12_FEATURE_D3D12_OPTIONS20: {
+            // Feature 49: Compute-Only Write Watch
+            D3D12_FEATURE_DATA_D3D12_OPTIONS20* opt20 = (D3D12_FEATURE_DATA_D3D12_OPTIONS20*)pFeatureSupportData;
+            opt20->ComputeOnlyWriteWatchSupported = TRUE;
             break;
         }
         case D3D12_FEATURE_PREDICATION: {

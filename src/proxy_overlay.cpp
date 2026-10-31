@@ -132,7 +132,23 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, rebBuf, (int)strlen(rebBuf));
         y += step;
 
-        // 3h. Audio Compute & Ray Tracing (Hardware Offload)
+        // 3h. Hi-Z Occlusion Culling (GPU AABB Depth Pyramid)
+        char hizBuf[140];
+        sprintf_s(hizBuf, " |-- Hi-Z Occlusion Culling: [ACTIVE] (%ld queries / GPU AABB Depth)",
+                  g_tel.d3d12_hiz_queries);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, hizBuf, (int)strlen(hizBuf));
+        y += step;
+
+        // 3i. Compute Skinning & Deformation (Body Flex, Wing Flex, Tyre Deformation)
+        char skinBuf[140];
+        sprintf_s(skinBuf, " |-- Compute Skinning: [ACTIVE] (%ld queries / Meshlet Body & Tyre Flex)",
+                  g_tel.d3d12_skinning_queries);
+        SetTextColor(hdc, RGB(70, 240, 140));
+        TextOutA(hdc, 10, y, skinBuf, (int)strlen(skinBuf));
+        y += step;
+
+        // 3j. Audio Compute & Ray Tracing (Hardware Offload)
         char audBuf[140];
         sprintf_s(audBuf, " |-- Audio Compute & RT: [ACTIVE] (%ld queries / Realtime Async Queue)",
                   g_tel.d3d12_audio_queries);
@@ -140,7 +156,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, audBuf, (int)strlen(audBuf));
         y += step;
 
-        // 3i. GPU-Driven Pipeline & Work Graphs
+        // 3k. GPU-Driven Pipeline & Work Graphs
         char gdpBuf[140];
         if (g_tel.d3d12_execute_indirect_1_1 && g_tel.d3d12_work_graphs) {
             sprintf_s(gdpBuf, " |-- GPU-driven Pipeline: [ACTIVE] (ExecuteIndirect 1.1 & WorkGraphs T1)");
@@ -152,21 +168,21 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, gdpBuf, (int)strlen(gdpBuf));
         y += step;
 
-        // 3j. Hardware Predication (Zero-CPU Occlusion Culling)
+        // 3l. Hardware Predication (Zero-CPU Occlusion Culling)
         char predBuf[140];
         sprintf_s(predBuf, " |-- HW Predication: [ACTIVE] (Zero-CPU Occlusion Culling)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, predBuf, (int)strlen(predBuf));
         y += step;
 
-        // 3k. Sampler Feedback
+        // 3m. Sampler Feedback
         char fbBuf[140];
         sprintf_s(fbBuf, " |-- Sampler Feedback: [ACTIVE] (Hardware Streaming Min-Map)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
         y += step;
 
-        // 3l. Particle Swizzle Fix
+        // 3n. Particle Swizzle Fix
         char partBuf[140];
         sprintf_s(partBuf, " |-- Particle Swizzle: [ACTIVE] (%ld fixes / %ld BC4 hits / %ld passed)",
                   g_tel.d3d12_particle_fixes, g_tel.d3d12_particle_fixes, g_tel.d3d12_srv_passed);
@@ -174,7 +190,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
 
-        // 3m. Async Copy Queue & Particle Support
+        // 3o. Async Copy Queue & Particle Support
         char copyBuf[140];
         sprintf_s(copyBuf, " \\-- Async Copy Queue: [ACTIVE] (Direct DMA Texture Streaming)");
         SetTextColor(hdc, RGB(70, 240, 140));
@@ -266,7 +282,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | WS_VISIBLE,
-        25, 25, 640, 360,
+        25, 25, 640, 395,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
