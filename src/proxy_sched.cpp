@@ -246,7 +246,20 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                 DWORD idealProc = (DWORD)-1;
                                 int cluster = 1;
 
-                                if (te.tpBasePri >= 9 || s_e_core_mask == 0) {
+                                // Relative thread priority evaluation:
+                                // Critical engine threads (Render Thread, Simulation Loop, TaskGraph Workers, Physics Dynamics, Audio Mixer)
+                                // have relative priority >= 1 (THREAD_PRIORITY_ABOVE_NORMAL, HIGHEST, or TIME_CRITICAL).
+                                // Background streaming, DirectStorage I/O, Oodle texture decompression, and Telemetry
+                                // have relative priority <= 0 (THREAD_PRIORITY_NORMAL or below).
+                                int pri = GetThreadPriority(hThread);
+                                bool isCritical = false;
+                                if (pri != THREAD_PRIORITY_ERROR_RETURN) {
+                                    isCritical = (pri >= 1 || pri == THREAD_PRIORITY_TIME_CRITICAL);
+                                } else {
+                                    isCritical = (te.tpBasePri >= 9);
+                                }
+
+                                if (isCritical || s_e_core_mask == 0) {
                                     // PERFORMANCE CLUSTER (Golden Cove P-Cores 0..11):
                                     // Render Thread, Main Simulation, TaskGraph Workers, Physics, Audio Mixer.
                                     // All critical threads share the entire 12-thread P-Core cluster with identical
