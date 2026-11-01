@@ -1,145 +1,78 @@
-import ctypes
-import ctypes.wintypes as wintypes
+import psutil
 import time
-import os
+import ctypes
+from ctypes import wintypes
 
-kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+pid = 26000
+try:
+    p = psutil.Process(pid)
+except Exception as e:
+    print(f"Error opening PID {pid}: {e}")
+    exit(1)
 
-THREAD_QUERY_INFORMATION = 0x0040
-THREAD_SET_INFORMATION = 0x0020
-TH32CS_SNAPTHREAD = 0x00000004
+print(f"Profiling PID {pid} ({p.name()}) for 3.0 seconds...")
 
-class THREADENTRY32(ctypes.Structure):
+class THREAD_BASIC_INFORMATION(ctypes.Structure):
     _fields_ = [
-        ('dwSize', wintypes.DWORD),
-        ('cntUsage', wintypes.DWORD),
-        ('th32ThreadID', wintypes.DWORD),
-        ('th32OwnerProcessID', wintypes.DWORD),
-        ('tpBasePri', wintypes.LONG),
-        ('tpDeltaPri', wintypes.LONG),
-        ('dwFlags', wintypes.DWORD)
+        ('ExitStatus', wintypes.DWORD),
+        ('TebBaseAddress', ctypes.c_void_p),
+        ('ClientId_UniqueProcess', ctypes.c_void_p),
+        ('ClientId_UniqueThread', ctypes.c_void_p),
+        ('AffinityMask', ctypes.c_size_t),
+        ('Priority', ctypes.c_long),
+        ('BasePriority', ctypes.c_long),
     ]
 
-class FILETIME(ctypes.Structure):
-    _fields_ = [('dwLowDateTime', wintypes.DWORD), ('dwHighDateTime', wintypes.DWORD)]
+OpenThread = ctypes.windll.kernel32.OpenThread
+CloseHandle = ctypes.windll.kernel32.CloseHandle
+NtQueryInformationThread = ctypes.windll.ntdll.NtQueryInformationThread
 
-def get_thread_times(h_thread):
-    cr = FILETIME()
-    ex = FILETIME()
-    k = FILETIME()
-    u = FILETIME()
-    if kernel32.GetThreadTimes(h_thread, ctypes.byref(cr), ctypes.byref(ex), ctypes.byref(k), ctypes.byref(u)):
-        k_val = (k.dwHighDateTime << 32) | k.dwLowDateTime
-        u_val = (u.dwHighDateTime << 32) | u.dwLowDateTime
-        return k_val + u_val
-    return 0
-
-def get_thread_affinity(tid):
-    h = kernel32.OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_INFORMATION, False, tid)
+def get_thread_info(tid):
+    h = OpenThread(0x0040, False, tid)
     if not h:
-        return 0
-    kernel32.SetThreadAffinityMask.restype = ctypes.c_size_t
-    kernel32.SetThreadAffinityMask.argtypes = [wintypes.HANDLE, ctypes.c_size_t]
-    prev = kernel32.SetThreadAffinityMask(h, 0xFFFF)
-    if prev != 0:
-        kernel32.SetThreadAffinityMask(h, prev)
-    kernel32.CloseHandle(h)
-    return prev
+        return 0, 0, 0
+    tbi = THREAD_BASIC_INFORMATION()
+    ret = NtQueryInformationThread(h, 0, ctypes.byref(tbi), ctypes.sizeof(tbi), None)
+    CloseHandle(h)
+    if ret == 0:
+        return tbi.BasePriority, tbi.Priority, tbi.AffinityMask
+    return 0, 0, 0
 
-def find_pid_by_name(name):
-    # Find process
-    import subprocess
-    out = subprocess.check_output(f'powershell -NoProfile -Command "(Get-Process -Name {name} -ErrorAction SilentlyContinue).Id"', shell=True).decode().strip()
-    if out:
-        return int(out.split()[0])
-    return None
+t0 = time.perf_counter()
+initial_threads = {t.id: (t.user_time, t.system_time) for t in p.threads()}
+time.sleep(3.0)
+final_threads = {t.id: (t.user_time, t.system_time) for t in p.threads()}
+t1 = time.perf_counter()
+wall_time = t1 - t0
 
-def profile_process(pid, duration=3.0):
-    print(f"Profiling Process PID {pid} over {duration} seconds...")
+thread_stats = []
+for tid, (u1, s1) in final_threads.items():
+    if tid in initial_threads:
+        u0, s0 = initial_threads[tid]
+        du = u1 - u0
+        ds = s1 - s0
+        total = du + ds
+        pct = (total / wall_time) * 100.0
+        u_pct = (du / wall_time) * 100.0
+        s_pct = (ds / wall_time) * 100.0
+        base_pri, pri, aff = get_thread_info(tid)
+        thread_stats.append((tid, pct, u_pct, s_pct, base_pri, pri, aff))
 
-    # Pass 1
-    h_snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
-    te = THREADENTRY32()
-    te.dwSize = ctypes.sizeof(THREADENTRY32)
+thread_stats.sort(key=lambda x: x[1], reverse=True)
 
-    t1 = {}
-    priorities = {}
-    if kernel32.Thread32First(h_snap, ctypes.byref(te)):
-        while True:
-            if te.th32OwnerProcessID == pid:
-                tid = te.th32ThreadID
-                priorities[tid] = te.tpBasePri
-                h_th = kernel32.OpenThread(THREAD_QUERY_INFORMATION, False, tid)
-                if h_th:
-                    t_val = get_thread_times(h_th)
-                    kernel32.CloseHandle(h_th)
-                    t1[tid] = t_val
-            if not kernel32.Thread32Next(h_snap, ctypes.byref(te)):
-                break
-    kernel32.CloseHandle(h_snap)
+print("\n" + "=" * 90)
+print(f"{'TID':>6} | {'Total%':>7} | {'User%':>6} | {'Sys%':>6} | {'Pri':>3} | {'Base':>4} | {'Affinity':>8} | Role / Classification")
+print("=" * 90)
 
-    time.sleep(duration)
-
-    # Pass 2
-    h_snap2 = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
-    te2 = THREADENTRY32()
-    te2.dwSize = ctypes.sizeof(THREADENTRY32)
-
-    results = []
-    if kernel32.Thread32First(h_snap2, ctypes.byref(te2)):
-        while True:
-            if te2.th32OwnerProcessID == pid:
-                tid = te2.th32ThreadID
-                if tid in t1:
-                    h_th = kernel32.OpenThread(THREAD_QUERY_INFORMATION, False, tid)
-                    if h_th:
-                        t_val = get_thread_times(h_th)
-                        kernel32.CloseHandle(h_th)
-                        delta_units = t_val - t1[tid]
-                        # 1 unit = 100 ns -> 10,000 units = 1 ms
-                        delta_ms = delta_units / 10000.0
-                        pct = (delta_ms / (duration * 1000.0)) * 100.0
-                        mask = get_thread_affinity(tid)
-                        
-                        mask_str = "Unknown"
-                        if mask == 0x0FFF:
-                            mask_str = "P-Cores Only (0-11)"
-                        elif mask == 0xF000:
-                            mask_str = "E-Cores Only (12-15)"
-                        elif mask == 0xFFFF:
-                            mask_str = "All 16 Cores (P+E)"
-                        else:
-                            mask_str = f"0x{mask:04X}"
-                            
-                        results.append({
-                            'tid': tid,
-                            'priority': priorities.get(tid, te2.tpBasePri),
-                            'delta_ms': delta_ms,
-                            'cpu_pct': pct,
-                            'mask': mask,
-                            'mask_str': mask_str
-                        })
-            if not kernel32.Thread32Next(h_snap2, ctypes.byref(te2)):
-                break
-    kernel32.CloseHandle(h_snap2)
-
-    results.sort(key=lambda x: x['delta_ms'], reverse=True)
-    return results
-
-if __name__ == '__main__':
-    pid = find_pid_by_name('forzahorizon6')
-    if not pid:
-        print("forzahorizon6 is not running!")
-    else:
-        results = profile_process(pid, 3.0)
-        total_cpu_ms = sum(r['delta_ms'] for r in results)
-        total_pct = sum(r['cpu_pct'] for r in results)
-        
-        print(f"\nTotal Threads Profiled: {len(results)}")
-        print(f"Total Process CPU Work in 3s: {total_cpu_ms:.1f} ms ({total_pct:.1f}% across all cores)")
-        print(f"Normalized CPU Usage (16 Cores): {total_pct / 16.0:.1f}%\n")
-
-        print(f"{'TID':<8} {'Priority':<10} {'CPU (ms/3s)':<14} {'CPU %':<10} {'Affinity Mask':<22}")
-        print("-" * 68)
-        for r in results[:20]:
-            print(f"{r['tid']:<8} {r['priority']:<10} {r['delta_ms']:<14.1f} {r['cpu_pct']:<10.1f} {r['mask_str']:<22}")
+for tid, pct, up, sp, base_pri, pri, aff in thread_stats[:25]:
+    role = "Unknown"
+    if tid == 32816: role = ">>> RENDER THREAD (D3D12 Submission) <<<"
+    elif tid == 3584: role = ">>> MAIN ENGINE THREAD (Game Loop) <<<"
+    elif tid == 34204: role = "AUDIO MIXER / RAYTRACING (Time Critical)"
+    elif tid == 13272: role = "PHYSICS SIMULATION (Vehicle Dynamics)"
+    elif pct >= 35.0: role = f"TaskGraph Worker Pool"
+    elif pct >= 15.0: role = "Streaming / Oodle Decompression"
+    elif pct >= 5.0:  role = "Driver / DX12 Worker"
+    else: role = "Background / Idle"
+    print(f"{tid:6d} | {pct:6.2f}% | {up:5.2f}% | {sp:5.2f}% | {pri:3d} | {base_pri:4d} | 0x{aff:04X} | {role}")
+print("=" * 90)

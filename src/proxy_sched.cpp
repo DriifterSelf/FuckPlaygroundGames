@@ -159,9 +159,20 @@ static DWORD WINAPI GovernorThread(LPVOID) {
             if (hSnap != INVALID_HANDLE_VALUE) {
                 THREADENTRY32 te;
                 te.dwSize = sizeof(THREADENTRY32);
-                LONG pCorePinned = 0;
-                LONG eCoreActive = 0;
 
+                struct ScannedThread {
+                    DWORD tid;
+                    LONG tpBasePri;
+                    HANDLE hThread;
+                    ThreadSample* sample;
+                    float frameWorkMs;
+                    ULONGLONG totalTime;
+                };
+
+                ScannedThread scanned[MAX_TRACKED_THREADS];
+                int scannedCount = 0;
+
+                // Pass 1: Gather thread metrics and handle snapshot
                 if (Thread32First(hSnap, &te)) {
                     do {
                         if (te.th32OwnerProcessID == pid && te.th32ThreadID != GetCurrentThreadId()) {
@@ -169,13 +180,14 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                             if (hThread) {
                                 FILETIME cr, ex, kernel, user;
                                 float frameWorkMs = 0.0f;
+                                ULONGLONG total = 0;
                                 ThreadSample* sample = FindOrCreateSample(te.th32ThreadID);
 
                                 if (GetThreadTimes(hThread, &cr, &ex, &kernel, &user)) {
                                     ULARGE_INTEGER k, u;
                                     k.LowPart = kernel.dwLowDateTime; k.HighPart = kernel.dwHighDateTime;
                                     u.LowPart = user.dwLowDateTime;   u.HighPart = user.dwHighDateTime;
-                                    ULONGLONG total = k.QuadPart + u.QuadPart;
+                                    total = k.QuadPart + u.QuadPart;
                                     DWORD now = GetTickCount();
 
                                     if (sample && sample->last_total_time > 0) {
@@ -192,78 +204,148 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     }
                                 }
 
-                                // HYBRID SCHEDULING RULE FOR INTEL 13TH GEN (6P + 4E = 16T):
-                                // 1. Frame-Critical & TaskGraph Worker Pool (tpBasePri >= 9):
-                                //    Includes: Main loop (15), Render submission (10), Physics (10), Audio (10),
-                                //    and all 8 TaskGraph workers (9). Exactly 12 threads match the 12 logical
-                                //    threads of the 6 P-Cores (0x0FFF) at 4.6 GHz!
-                                //    THEY MUST ALL REMAIN TOGETHER ON P-CORES to eliminate barrier wait stalls,
-                                //    convoy stalls, and cross-cluster L3 cache bouncing!
-                                // 2. Background Streaming & Decompression Workers (tpBasePri <= 8):
-                                //    Dedicated to Gracemont E-Cores (0xF000) so Oodle texture decompression,
-                                //    chunk streaming, DirectStorage I/O, audio streaming buffers, and telemetry
-                                //    run in parallel on efficiency cores without stealing P-Core cycles or L2 cache!
-                                // 3. Sustained Burst Overflow (> 8ms on background workers):
-                                //    If a background worker experiences heavy sustained frame work > ECoreThresholdMs (8ms),
-                                //    it is allowed to assist across All 16 Cores (0xFFFF) with 2-window hysteresis.
-                                if (te.tpBasePri >= 9) {
-                                    if (sample && sample->last_affinity_type != 1) {
-                                        SetThreadAffinityMask(hThread, s_p_core_mask);
-                                        if (sample->last_affinity_type != 0) {
-                                            InterlockedIncrement(&g_tel.sched_migrations);
-                                        }
-                                        sample->last_affinity_type = 1;
-                                    } else if (!sample) {
-                                        SetThreadAffinityMask(hThread, s_p_core_mask);
-                                    }
-                                    pCorePinned++;
+                                if (scannedCount < MAX_TRACKED_THREADS) {
+                                    scanned[scannedCount].tid = te.th32ThreadID;
+                                    scanned[scannedCount].tpBasePri = te.tpBasePri;
+                                    scanned[scannedCount].hThread = hThread;
+                                    scanned[scannedCount].sample = sample;
+                                    scanned[scannedCount].frameWorkMs = frameWorkMs;
+                                    scanned[scannedCount].totalTime = total;
+                                    scannedCount++;
                                 } else {
-                                    // Background worker: default to E-Cores (desired = 2).
-                                    // If exceeding heavy threshold (>8ms), allow burst onto All Cores (desired = 3).
-                                    int desired = (frameWorkMs > (float)g_cfg.ecore_threshold_ms) ? 3 : 2;
-                                    DWORD_PTR targetMask = (desired == 3) ? s_all_cores_mask : s_e_core_mask;
-
-                                    if (sample) {
-                                        if (sample->pending_affinity_type == desired) {
-                                            sample->pending_count++;
-                                        } else {
-                                            sample->pending_affinity_type = desired;
-                                            sample->pending_count = 1;
-                                        }
-
-                                        // Apply hysteresis: require 2 consecutive samples (1.0s) before migrating
-                                        if (sample->pending_count >= 2 && sample->last_affinity_type != desired) {
-                                            SetThreadAffinityMask(hThread, targetMask);
-                                            if (sample->last_affinity_type != 0) {
-                                                InterlockedIncrement(&g_tel.sched_migrations);
-                                            }
-                                            sample->last_affinity_type = desired;
-                                        } else if (sample->last_affinity_type == 0) {
-                                            SetThreadAffinityMask(hThread, targetMask);
-                                            sample->last_affinity_type = desired;
-                                        }
-
-                                        if (sample->last_affinity_type == 2 || sample->last_affinity_type == 3) {
-                                            eCoreActive++;
-                                        } else {
-                                            pCorePinned++;
-                                        }
-                                    } else {
-                                        SetThreadAffinityMask(hThread, targetMask);
-                                        eCoreActive++;
-                                    }
+                                    CloseHandle(hThread);
                                 }
-
-                                CloseHandle(hThread);
                             }
                         }
                     } while (Thread32Next(hSnap, &te));
+                }
+                CloseHandle(hSnap);
+
+                // Identify dedicated threads:
+                // 1. Audio thread: highest load with tpBasePri >= 15
+                DWORD audio_tid = 0;
+                ULONGLONG max_audio_time = 0;
+                for (int i = 0; i < scannedCount; i++) {
+                    if (scanned[i].tpBasePri >= 15 && scanned[i].totalTime > max_audio_time) {
+                        max_audio_time = scanned[i].totalTime;
+                        audio_tid = scanned[i].tid;
+                    }
+                }
+
+                // 2. Render, Main, and Physics threads among tpBasePri == 10:
+                DWORD render_tid = 0, main_tid = 0, physics_tid = 0;
+                ULONGLONG top1_time = 0, top2_time = 0, top3_time = 0;
+                for (int i = 0; i < scannedCount; i++) {
+                    if (scanned[i].tpBasePri == 10) {
+                        ULONGLONG t = scanned[i].totalTime;
+                        if (t > top1_time) {
+                            top3_time = top2_time; physics_tid = main_tid;
+                            top2_time = top1_time; main_tid = render_tid;
+                            top1_time = t;         render_tid = scanned[i].tid;
+                        } else if (t > top2_time) {
+                            top3_time = top2_time; physics_tid = main_tid;
+                            top2_time = t;         main_tid = scanned[i].tid;
+                        } else if (t > top3_time) {
+                            top3_time = t;         physics_tid = scanned[i].tid;
+                        }
+                    }
+                }
+
+                // Pass 2: Assign Topology-Isolated Affinities
+                LONG pCorePinned = 0;
+                LONG eCoreActive = 0;
+                DWORD_PTR worker_mask = (s_all_cores_mask & ~0x000F); // Logical 4..15 (excludes Physical Cores 0 & 1)
+                if (worker_mask == 0) worker_mask = s_all_cores_mask;
+
+                for (int i = 0; i < scannedCount; i++) {
+                    DWORD tid = scanned[i].tid;
+                    HANDLE hThread = scanned[i].hThread;
+                    ThreadSample* sample = scanned[i].sample;
+                    float frameWorkMs = scanned[i].frameWorkMs;
+                    LONG tpBasePri = scanned[i].tpBasePri;
+
+                    DWORD_PTR targetMask = s_all_cores_mask;
+                    DWORD idealProc = (DWORD)-1;
+                    int desiredAffinityType = 1;
+
+                    if (tid == render_tid && render_tid != 0) {
+                        // Dedicated Physical Core 0 (Logical 0, 1) - Render Thread
+                        targetMask = 0x0003;
+                        idealProc = 0;
+                        desiredAffinityType = 10;
+                        pCorePinned++;
+                    } else if (tid == main_tid && main_tid != 0) {
+                        // Dedicated Physical Core 1 (Logical 2, 3) - Main Engine Simulation Thread
+                        targetMask = 0x000C;
+                        idealProc = 2;
+                        desiredAffinityType = 11;
+                        pCorePinned++;
+                    } else if (tid == audio_tid && audio_tid != 0) {
+                        // Dedicated Physical Core 2 (Logical 4, 5) - Time-Critical Audio Mixer / Raytracing
+                        targetMask = 0x0030;
+                        idealProc = 4;
+                        desiredAffinityType = 12;
+                        pCorePinned++;
+                    } else if (tid == physics_tid && physics_tid != 0) {
+                        // Dedicated Physical Core 3 (Logical 6, 7) - Vehicle Physics Dynamics
+                        targetMask = 0x00C0;
+                        idealProc = 6;
+                        desiredAffinityType = 13;
+                        pCorePinned++;
+                    } else if (tpBasePri >= 9) {
+                        // TaskGraph Parallel Worker Pool & Engine Workers:
+                        // Dispatched across Cores 4..15 (0xFFF0) - GUARANTEED ZERO CONTENTION on Cores 0..3!
+                        targetMask = worker_mask;
+                        desiredAffinityType = 14;
+                        pCorePinned++;
+                    } else {
+                        // Background Streaming & Decompression Workers (tpBasePri <= 8):
+                        // Dedicated to Gracemont E-Cores (0xF000) so Oodle / DirectStorage run off-cluster.
+                        int bgDesired = (frameWorkMs > (float)g_cfg.ecore_threshold_ms) ? 3 : 2;
+                        targetMask = (bgDesired == 3) ? s_all_cores_mask : s_e_core_mask;
+                        desiredAffinityType = bgDesired;
+
+                        if (sample) {
+                            if (sample->pending_affinity_type == bgDesired) {
+                                sample->pending_count++;
+                            } else {
+                                sample->pending_affinity_type = bgDesired;
+                                sample->pending_count = 1;
+                            }
+                            if (sample->pending_count < 2 && sample->last_affinity_type != 0) {
+                                desiredAffinityType = sample->last_affinity_type;
+                                targetMask = (desiredAffinityType == 3) ? s_all_cores_mask : s_e_core_mask;
+                            }
+                        }
+                        if (desiredAffinityType == 2 || desiredAffinityType == 3) {
+                            eCoreActive++;
+                        } else {
+                            pCorePinned++;
+                        }
+                    }
+
+                    if (sample && sample->last_affinity_type != desiredAffinityType) {
+                        SetThreadAffinityMask(hThread, targetMask);
+                        if (idealProc != (DWORD)-1) {
+                            SetThreadIdealProcessor(hThread, idealProc);
+                        }
+                        if (sample->last_affinity_type != 0) {
+                            InterlockedIncrement(&g_tel.sched_migrations);
+                        }
+                        sample->last_affinity_type = desiredAffinityType;
+                    } else if (!sample) {
+                        SetThreadAffinityMask(hThread, targetMask);
+                        if (idealProc != (DWORD)-1) {
+                            SetThreadIdealProcessor(hThread, idealProc);
+                        }
+                    }
+
+                    CloseHandle(hThread);
                 }
 
                 InterlockedIncrement(&g_tel.sched_scans);
                 g_tel.heavy_threads_pinned = pCorePinned;
                 g_tel.ecore_threads_active = eCoreActive;
-                CloseHandle(hSnap);
             }
         }
         Sleep(500); // Dynamic evaluation every 500 ms

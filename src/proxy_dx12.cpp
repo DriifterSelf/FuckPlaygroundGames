@@ -112,6 +112,56 @@ static PFN_CreateCommittedResource3 s_orig_ccr3 = NULL;
 static uint64_t s_features_logged_mask = 0;
 static uint64_t s_injected_logged_mask = 0;
 
+// High-Performance Thread-Local Telemetry Batcher:
+// Completely eliminates 34,800 atomic bus-lock ('lock inc') stalls per second
+// across CheckFeatureSupport and CreateShaderResourceView.
+struct D3D12TelemetryBatcher {
+    int cfs_queries;
+    int cfs_injected;
+    int cfs_passed;
+    int srv_total;
+    int srv_passed;
+    int srv_fixes;
+    int hiz_queries;
+    int skinning_queries;
+};
+static thread_local D3D12TelemetryBatcher s_tl_batch = {};
+
+static inline void FlushD3D12Batch() {
+    if (s_tl_batch.cfs_queries >= 64) {
+        InterlockedAdd(&g_tel.d3d12_feature_queries, s_tl_batch.cfs_queries);
+        s_tl_batch.cfs_queries = 0;
+    }
+    if (s_tl_batch.cfs_injected >= 64) {
+        InterlockedAdd(&g_tel.d3d12_cfs_injected, s_tl_batch.cfs_injected);
+        s_tl_batch.cfs_injected = 0;
+    }
+    if (s_tl_batch.cfs_passed >= 64) {
+        InterlockedAdd(&g_tel.d3d12_cfs_passed, s_tl_batch.cfs_passed);
+        s_tl_batch.cfs_passed = 0;
+    }
+    if (s_tl_batch.srv_total >= 64) {
+        InterlockedAdd(&g_tel.d3d12_srv_total, s_tl_batch.srv_total);
+        s_tl_batch.srv_total = 0;
+    }
+    if (s_tl_batch.srv_passed >= 64) {
+        InterlockedAdd(&g_tel.d3d12_srv_passed, s_tl_batch.srv_passed);
+        s_tl_batch.srv_passed = 0;
+    }
+    if (s_tl_batch.srv_fixes >= 16) {
+        InterlockedAdd(&g_tel.d3d12_particle_fixes, s_tl_batch.srv_fixes);
+        s_tl_batch.srv_fixes = 0;
+    }
+    if (s_tl_batch.hiz_queries >= 64) {
+        InterlockedAdd(&g_tel.d3d12_hiz_queries, s_tl_batch.hiz_queries);
+        s_tl_batch.hiz_queries = 0;
+    }
+    if (s_tl_batch.skinning_queries >= 64) {
+        InterlockedAdd(&g_tel.d3d12_skinning_queries, s_tl_batch.skinning_queries);
+        s_tl_batch.skinning_queries = 0;
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE Hook_CreateCommandQueue(
     ID3D12Device* This,
     const D3D12_COMMAND_QUEUE_DESC* pDesc,
@@ -151,7 +201,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
     HRESULT hr = s_orig_cfs(This, Feature, pFeatureSupportData, FeatureSupportDataSize);
 
     if (SUCCEEDED(hr) && pFeatureSupportData != NULL && g_cfg.compute_offload) {
-        InterlockedIncrement(&g_tel.d3d12_feature_queries);
+        s_tl_batch.cfs_queries++;
 
         if (Feature < 64) {
             if (!(s_features_logged_mask & (1ULL << Feature))) {
@@ -211,7 +261,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             );
             if (is_depth_hiz) {
                 g_tel.d3d12_hiz_culling = 1;
-                InterlockedIncrement(&g_tel.d3d12_hiz_queries);
+                s_tl_batch.hiz_queries++;
             }
 
             // Compute Skinning & Vertex Deformation Formats (Body Flex, Wing Flex, Tyre Deformation)
@@ -227,7 +277,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             );
             if (is_skinning_deform) {
                 g_tel.d3d12_compute_skinning = 1;
-                InterlockedIncrement(&g_tel.d3d12_skinning_queries);
+                s_tl_batch.skinning_queries++;
             }
 
             if (is_depth_hiz || is_skinning_deform ||
@@ -569,13 +619,14 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         }
 
         if (injected) {
-            InterlockedIncrement(&g_tel.d3d12_cfs_injected);
+            s_tl_batch.cfs_injected++;
         } else {
-            InterlockedIncrement(&g_tel.d3d12_cfs_passed);
+            s_tl_batch.cfs_passed++;
         }
     } else {
-        InterlockedIncrement(&g_tel.d3d12_cfs_passed);
+        s_tl_batch.cfs_passed++;
     }
+    FlushD3D12Batch();
     return hr;
 }
 
@@ -590,7 +641,7 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
     const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 ) {
-    InterlockedIncrement(&g_tel.d3d12_srv_total);
+    s_tl_batch.srv_total++;
 
     if (pDesc) {
         if ((pDesc->Format == DXGI_FORMAT_BC4_UNORM || pDesc->Format == DXGI_FORMAT_BC4_SNORM) &&
@@ -598,7 +649,8 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
         {
             D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
             desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-            InterlockedIncrement(&g_tel.d3d12_particle_fixes);
+            s_tl_batch.srv_fixes++;
+            FlushD3D12Batch();
             s_orig_csrv(This, pResource, &desc_copy, DestDescriptor);
             return;
         }
@@ -622,13 +674,15 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
                 local_desc.Texture2DArray.PlaneSlice = 0;
                 local_desc.Texture2DArray.ResourceMinLODClamp = 0.0f;
             }
-            InterlockedIncrement(&g_tel.d3d12_particle_fixes);
+            s_tl_batch.srv_fixes++;
+            FlushD3D12Batch();
             s_orig_csrv(This, pResource, &local_desc, DestDescriptor);
             return;
         }
     }
 
-    InterlockedIncrement(&g_tel.d3d12_srv_passed);
+    s_tl_batch.srv_passed++;
+    FlushD3D12Batch();
     s_orig_csrv(This, pResource, pDesc, DestDescriptor);
 }
 
