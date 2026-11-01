@@ -205,9 +205,10 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;
 
-        // 3q. Async Copy Queue & Particle Support
+        // 3q. Async Copy Queue & ReBAR Rescue Pipeline
         char copyBuf[140];
-        sprintf_s(copyBuf, " \\-- Direct DMA ReBAR: [ACTIVE] (Isolated MMU & D3D12 Ultimate 12_2)");
+        sprintf_s(copyBuf, " \\-- Direct DMA ReBAR: [ACTIVE] (%ld rescued OOM | Placed Heaps | 12_2)",
+                  g_tel.d3d12_gpu_upload_rescued);
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
@@ -215,7 +216,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         // 4. Dynamic CPU Governor (8ms Threshold) + MMCSS
         char schedBuf[160];
         if (g_cfg.hybrid_governor) {
-            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core <=8ms | %ld E-Core >8ms | MMCSS %s)",
+            sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core Engine | %ld E-Core Stream | MMCSS %s)",
                       g_tel.heavy_threads_pinned, g_tel.ecore_threads_active, g_tel.mmcss_active ? "Games" : "Default");
             SetTextColor(hdc, RGB(70, 240, 140));
         } else {

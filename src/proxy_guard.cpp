@@ -88,6 +88,44 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }
+
+                // CASE 3: Secondary NULL-Read Dereference on 3D Model / Vertex Buffers
+                // Instruction reading from null address ([0x0]) at RVA 0x33B6E83
+                if (isWrite == 0 && (faultAddr == 0 || faultAddr < 0x100)) {
+                    if (rva == 0x033B6E83 || (rva >= 0x033B6000 && rva <= 0x033B8000)) {
+                        LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                        InterlockedIncrement(&g_tel.guard_suppressed);
+
+                        log_msg("[GUARD] Intercepted secondary NULL-read dereference #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Opcode=%02X %02X %02X %02X). Rescuing context.",
+                                hit, rip, rva, faultAddr, rip[0], rip[1], rip[2], rip[3]);
+
+                        // Decode instruction length for common x86-64 MOV patterns:
+                        int instrLen = 3;
+                        if (rip[0] == 0x48 && rip[1] == 0x8B) {
+                            uint8_t modrm = rip[2];
+                            uint8_t mod = modrm >> 6;
+                            if (mod == 0) {
+                                if ((modrm & 7) == 4) instrLen = 4; // SIB byte
+                                else if ((modrm & 7) == 5) instrLen = 7; // disp32
+                                else instrLen = 3;
+                            } else if (mod == 1) {
+                                instrLen = ((modrm & 7) == 4) ? 5 : 4; // disp8
+                            } else if (mod == 2) {
+                                instrLen = ((modrm & 7) == 4) ? 8 : 7; // disp32
+                            }
+                        } else if (rip[0] == 0x8B) {
+                            uint8_t modrm = rip[1];
+                            uint8_t mod = modrm >> 6;
+                            if (mod == 0) instrLen = 2;
+                            else if (mod == 1) instrLen = 3;
+                            else if (mod == 2) instrLen = 6;
+                        }
+
+                        pInfo->ContextRecord->Rax = 0;
+                        pInfo->ContextRecord->Rip += instrLen;
+                        return EXCEPTION_CONTINUE_EXECUTION;
+                    }
+                }
             }
             __except (EXCEPTION_EXECUTE_HANDLER) {
             }

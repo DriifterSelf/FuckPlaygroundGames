@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.10.1"
+#define PROXY_VERSION "3.10.2"
 
 enum component_status
 {
@@ -82,6 +82,9 @@ struct proxy_telemetry
     int d3d12_compute_skinning;
     volatile LONG d3d12_skinning_queries;
     int d3d12_placed_resources;
+    volatile LONG d3d12_gpu_upload_rescued;
+    volatile LONG d3d12_committed_resources_created;
+    volatile LONG d3d12_heaps_created;
     int d3d12_displayable;
     int d3d12_isolated_mmu;
     volatile LONG d3d12_compute_queues_elevated;

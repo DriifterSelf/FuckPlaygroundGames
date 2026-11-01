@@ -24,9 +24,98 @@ typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 );
 
+typedef HRESULT (STDMETHODCALLTYPE *PFN_QueryInterface)(
+    ID3D12Device* This,
+    REFIID riid,
+    void** ppvObject
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource)(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    REFIID riidResource,
+    void** ppvResource
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateHeap)(
+    ID3D12Device* This,
+    const D3D12_HEAP_DESC* pDesc,
+    REFIID riid,
+    void** ppvHeap
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreatePlacedResource)(
+    ID3D12Device* This,
+    ID3D12Heap* pHeap,
+    UINT64 HeapOffset,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    REFIID riid,
+    void** ppvResource
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource1)(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riidResource,
+    void** ppvResource
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateHeap1)(
+    ID3D12Device* This,
+    const D3D12_HEAP_DESC* pDesc,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riid,
+    void** ppvHeap
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource2)(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const void* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riidResource,
+    void** ppvResource
+);
+
+typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource3)(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const void* pDesc,
+    uint32_t InitialLayout,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    UINT32 NumCastableFormats,
+    const void* pCastableFormats,
+    REFIID riidResource,
+    void** ppvResource
+);
+
+static PFN_QueryInterface s_orig_qi = NULL;
 static PFN_CreateCommandQueue s_orig_ccq = NULL;
 static PFN_CheckFeatureSupport s_orig_cfs = NULL;
 static PFN_CreateShaderResourceView s_orig_csrv = NULL;
+static PFN_CreateCommittedResource s_orig_ccr = NULL;
+static PFN_CreateHeap s_orig_ch = NULL;
+static PFN_CreatePlacedResource s_orig_cpr = NULL;
+static PFN_CreateCommittedResource1 s_orig_ccr1 = NULL;
+static PFN_CreateHeap1 s_orig_ch1 = NULL;
+static PFN_CreateCommittedResource2 s_orig_ccr2 = NULL;
+static PFN_CreateCommittedResource3 s_orig_ccr3 = NULL;
 static uint64_t s_features_logged_mask = 0;
 static uint64_t s_injected_logged_mask = 0;
 
@@ -550,48 +639,278 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
     s_orig_csrv(This, pResource, pDesc, DestDescriptor);
 }
 
+// ============================================================================
+// D3D12 RESCUE PIPELINE: GPU Upload Heap & Host Memory Allocator
+// Transparently catches E_OUTOFMEMORY on GPU_UPLOAD / ReBAR heaps (such as
+// monolithic 2GB SYSTEM_MODEL_BUFFER expansions) and satisfies them in Host RAM.
+// ============================================================================
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateCommittedResource(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    REFIID riidResource,
+    void** ppvResource
+) {
+    InterlockedIncrement(&g_tel.d3d12_committed_resources_created);
+    HRESULT hr = s_orig_ccr(This, pHeapProperties, HeapFlags, pDesc, InitialResourceState, pOptimizedClearValue, riidResource, ppvResource);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pHeapProperties && (pHeapProperties->Type == (D3D12_HEAP_TYPE)5 /* D3D12_HEAP_TYPE_GPU_UPLOAD */ ||
+                            (pHeapProperties->Type == D3D12_HEAP_TYPE_CUSTOM &&
+                             pHeapProperties->CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_PROPERTIES fbProps = *pHeapProperties;
+        fbProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        D3D12_RESOURCE_STATES fbState = (InitialResourceState != D3D12_RESOURCE_STATE_GENERIC_READ)
+            ? D3D12_RESOURCE_STATE_GENERIC_READ : InitialResourceState;
+
+        HRESULT retryHr = s_orig_ccr(This, &fbProps, HeapFlags, pDesc, fbState, pOptimizedClearValue, riidResource, ppvResource);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateCommittedResource: Rescued GPU_UPLOAD allocation (hr=0x%08X) -> Host Upload Heap (Size=%llu bytes).",
+                    hr, pDesc ? (unsigned long long)pDesc->Width : 0ULL);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateHeap(
+    ID3D12Device* This,
+    const D3D12_HEAP_DESC* pDesc,
+    REFIID riid,
+    void** ppvHeap
+) {
+    InterlockedIncrement(&g_tel.d3d12_heaps_created);
+    HRESULT hr = s_orig_ch(This, pDesc, riid, ppvHeap);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pDesc && (pDesc->Properties.Type == (D3D12_HEAP_TYPE)5 ||
+                  (pDesc->Properties.Type == D3D12_HEAP_TYPE_CUSTOM &&
+                   pDesc->Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_DESC fbDesc = *pDesc;
+        fbDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        HRESULT retryHr = s_orig_ch(This, &fbDesc, riid, ppvHeap);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateHeap: Rescued GPU_UPLOAD heap (hr=0x%08X) -> Host Upload Heap (Size=%llu bytes).",
+                    hr, (unsigned long long)pDesc->SizeInBytes);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreatePlacedResource(
+    ID3D12Device* This,
+    ID3D12Heap* pHeap,
+    UINT64 HeapOffset,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    REFIID riid,
+    void** ppvResource
+) {
+    HRESULT hr = s_orig_cpr(This, pHeap, HeapOffset, pDesc, InitialState, pOptimizedClearValue, riid, ppvResource);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (InitialState != D3D12_RESOURCE_STATE_GENERIC_READ) {
+        HRESULT retryHr = s_orig_cpr(This, pHeap, HeapOffset, pDesc, D3D12_RESOURCE_STATE_GENERIC_READ, pOptimizedClearValue, riid, ppvResource);
+        if (SUCCEEDED(retryHr)) return retryHr;
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateCommittedResource1(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const D3D12_RESOURCE_DESC* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riidResource,
+    void** ppvResource
+) {
+    InterlockedIncrement(&g_tel.d3d12_committed_resources_created);
+    HRESULT hr = s_orig_ccr1(This, pHeapProperties, HeapFlags, pDesc, InitialResourceState, pOptimizedClearValue, pProtectedSession, riidResource, ppvResource);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pHeapProperties && (pHeapProperties->Type == (D3D12_HEAP_TYPE)5 ||
+                            (pHeapProperties->Type == D3D12_HEAP_TYPE_CUSTOM &&
+                             pHeapProperties->CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_PROPERTIES fbProps = *pHeapProperties;
+        fbProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        D3D12_RESOURCE_STATES fbState = (InitialResourceState != D3D12_RESOURCE_STATE_GENERIC_READ)
+            ? D3D12_RESOURCE_STATE_GENERIC_READ : InitialResourceState;
+
+        HRESULT retryHr = s_orig_ccr1(This, &fbProps, HeapFlags, pDesc, fbState, pOptimizedClearValue, pProtectedSession, riidResource, ppvResource);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateCommittedResource1: Rescued GPU_UPLOAD allocation (hr=0x%08X) -> Host Upload Heap (Size=%llu bytes).",
+                    hr, pDesc ? (unsigned long long)pDesc->Width : 0ULL);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateHeap1(
+    ID3D12Device* This,
+    const D3D12_HEAP_DESC* pDesc,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riid,
+    void** ppvHeap
+) {
+    InterlockedIncrement(&g_tel.d3d12_heaps_created);
+    HRESULT hr = s_orig_ch1(This, pDesc, pProtectedSession, riid, ppvHeap);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pDesc && (pDesc->Properties.Type == (D3D12_HEAP_TYPE)5 ||
+                  (pDesc->Properties.Type == D3D12_HEAP_TYPE_CUSTOM &&
+                   pDesc->Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_DESC fbDesc = *pDesc;
+        fbDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        HRESULT retryHr = s_orig_ch1(This, &fbDesc, pProtectedSession, riid, ppvHeap);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateHeap1: Rescued GPU_UPLOAD heap (hr=0x%08X) -> Host Upload Heap (Size=%llu bytes).",
+                    hr, (unsigned long long)pDesc->SizeInBytes);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateCommittedResource2(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const void* pDesc,
+    D3D12_RESOURCE_STATES InitialResourceState,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    REFIID riidResource,
+    void** ppvResource
+) {
+    InterlockedIncrement(&g_tel.d3d12_committed_resources_created);
+    HRESULT hr = s_orig_ccr2(This, pHeapProperties, HeapFlags, pDesc, InitialResourceState, pOptimizedClearValue, pProtectedSession, riidResource, ppvResource);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pHeapProperties && (pHeapProperties->Type == (D3D12_HEAP_TYPE)5 ||
+                            (pHeapProperties->Type == D3D12_HEAP_TYPE_CUSTOM &&
+                             pHeapProperties->CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_PROPERTIES fbProps = *pHeapProperties;
+        fbProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        D3D12_RESOURCE_STATES fbState = (InitialResourceState != D3D12_RESOURCE_STATE_GENERIC_READ)
+            ? D3D12_RESOURCE_STATE_GENERIC_READ : InitialResourceState;
+
+        HRESULT retryHr = s_orig_ccr2(This, &fbProps, HeapFlags, pDesc, fbState, pOptimizedClearValue, pProtectedSession, riidResource, ppvResource);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateCommittedResource2: Rescued GPU_UPLOAD allocation (hr=0x%08X) -> Host Upload Heap.", hr);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_CreateCommittedResource3(
+    ID3D12Device* This,
+    const D3D12_HEAP_PROPERTIES* pHeapProperties,
+    D3D12_HEAP_FLAGS HeapFlags,
+    const void* pDesc,
+    uint32_t InitialLayout,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    struct ID3D12ProtectedResourceSession* pProtectedSession,
+    UINT32 NumCastableFormats,
+    const void* pCastableFormats,
+    REFIID riidResource,
+    void** ppvResource
+) {
+    InterlockedIncrement(&g_tel.d3d12_committed_resources_created);
+    HRESULT hr = s_orig_ccr3(This, pHeapProperties, HeapFlags, pDesc, InitialLayout, pOptimizedClearValue, pProtectedSession, NumCastableFormats, pCastableFormats, riidResource, ppvResource);
+    if (SUCCEEDED(hr)) return hr;
+
+    if (pHeapProperties && (pHeapProperties->Type == (D3D12_HEAP_TYPE)5 ||
+                            (pHeapProperties->Type == D3D12_HEAP_TYPE_CUSTOM &&
+                             pHeapProperties->CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE))) {
+        D3D12_HEAP_PROPERTIES fbProps = *pHeapProperties;
+        fbProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+        fbProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        fbProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        HRESULT retryHr = s_orig_ccr3(This, &fbProps, HeapFlags, pDesc, InitialLayout, pOptimizedClearValue, pProtectedSession, NumCastableFormats, pCastableFormats, riidResource, ppvResource);
+        if (SUCCEEDED(retryHr)) {
+            InterlockedIncrement(&g_tel.d3d12_gpu_upload_rescued);
+            log_msg("[DX12] [RESCUE] CreateCommittedResource3: Rescued GPU_UPLOAD allocation (hr=0x%08X) -> Host Upload Heap.", hr);
+            return retryHr;
+        }
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE Hook_QueryInterface(
+    ID3D12Device* This,
+    REFIID riid,
+    void** ppvObject
+) {
+    HRESULT hr = s_orig_qi(This, riid, ppvObject);
+    if (SUCCEEDED(hr) && ppvObject && *ppvObject) {
+        dx12_hook_install((ID3D12Device*)*ppvObject);
+    }
+    return hr;
+}
+
+static void HookVtblEntry(void** slot, void* hookFunc, void** origFunc, const char* name) {
+    if (*slot != hookFunc) {
+        DWORD oldProtect;
+        if (VirtualProtect(slot, sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            *origFunc = *slot;
+            *slot = hookFunc;
+            VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
+            log_msg("[DX12] Hooked %s (%p -> %p)", name, *origFunc, hookFunc);
+        } else {
+            log_msg("[DX12] [WARN] VirtualProtect failed on %s", name);
+        }
+    }
+}
+
 void dx12_hook_install(ID3D12Device* pDevice) {
     if (!pDevice) return;
 
     void** vtbl = *(void***)pDevice;
     if (!vtbl) return;
 
-    // CreateCommandQueue is method index 8 in ID3D12DeviceVtbl (offset 64 bytes = 8 * 8)
-    if (vtbl[8] != (void*)Hook_CreateCommandQueue) {
-        DWORD oldProtect;
-        if (VirtualProtect(&vtbl[8], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            s_orig_ccq = (PFN_CreateCommandQueue)vtbl[8];
-            vtbl[8] = (void*)Hook_CreateCommandQueue;
-            VirtualProtect(&vtbl[8], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[DX12] Successfully hooked ID3D12Device::CreateCommandQueue (vtbl[8]) for Hardware Queue Priority Elevation.");
-        } else {
-            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CreateCommandQueue.");
-        }
-    }
+    HookVtblEntry(&vtbl[0], (void*)Hook_QueryInterface, (void**)&s_orig_qi, "ID3D12Device::QueryInterface (vtbl[0])");
+    HookVtblEntry(&vtbl[8], (void*)Hook_CreateCommandQueue, (void**)&s_orig_ccq, "ID3D12Device::CreateCommandQueue (vtbl[8])");
+    HookVtblEntry(&vtbl[13], (void*)Hook_CheckFeatureSupport, (void**)&s_orig_cfs, "ID3D12Device::CheckFeatureSupport (vtbl[13])");
+    HookVtblEntry(&vtbl[18], (void*)Hook_CreateShaderResourceView, (void**)&s_orig_csrv, "ID3D12Device::CreateShaderResourceView (vtbl[18])");
+    HookVtblEntry(&vtbl[27], (void*)Hook_CreateCommittedResource, (void**)&s_orig_ccr, "ID3D12Device::CreateCommittedResource (vtbl[27])");
+    HookVtblEntry(&vtbl[28], (void*)Hook_CreateHeap, (void**)&s_orig_ch, "ID3D12Device::CreateHeap (vtbl[28])");
+    HookVtblEntry(&vtbl[29], (void*)Hook_CreatePlacedResource, (void**)&s_orig_cpr, "ID3D12Device::CreatePlacedResource (vtbl[29])");
 
-    // CheckFeatureSupport is method index 13 in ID3D12DeviceVtbl (offset 104 bytes = 13 * 8)
-    if (vtbl[13] != (void*)Hook_CheckFeatureSupport) {
-        DWORD oldProtect;
-        if (VirtualProtect(&vtbl[13], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            s_orig_cfs = (PFN_CheckFeatureSupport)vtbl[13];
-            vtbl[13] = (void*)Hook_CheckFeatureSupport;
-            VirtualProtect(&vtbl[13], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[DX12] Successfully hooked ID3D12Device::CheckFeatureSupport (vtbl[13]).");
-        } else {
-            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CheckFeatureSupport.");
-        }
-    }
-
-    // CreateShaderResourceView is method index 18 in ID3D12DeviceVtbl (offset 144 bytes = 18 * 8)
-    if (vtbl[18] != (void*)Hook_CreateShaderResourceView) {
-        DWORD oldProtect;
-        if (VirtualProtect(&vtbl[18], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            s_orig_csrv = (PFN_CreateShaderResourceView)vtbl[18];
-            vtbl[18] = (void*)Hook_CreateShaderResourceView;
-            VirtualProtect(&vtbl[18], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[DX12] Successfully hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Swizzle Fix.");
-        } else {
-            log_msg("[DX12] [WARN] VirtualProtect failed on ID3D12Device::CreateShaderResourceView.");
-        }
-    }
+    // Extended interfaces if available on unified vtable
+    HookVtblEntry(&vtbl[53], (void*)Hook_CreateCommittedResource1, (void**)&s_orig_ccr1, "ID3D12Device4::CreateCommittedResource1 (vtbl[53])");
+    HookVtblEntry(&vtbl[54], (void*)Hook_CreateHeap1, (void**)&s_orig_ch1, "ID3D12Device4::CreateHeap1 (vtbl[54])");
+    HookVtblEntry(&vtbl[69], (void*)Hook_CreateCommittedResource2, (void**)&s_orig_ccr2, "ID3D12Device8::CreateCommittedResource2 (vtbl[69])");
+    HookVtblEntry(&vtbl[76], (void*)Hook_CreateCommittedResource3, (void**)&s_orig_ccr3, "ID3D12Device10::CreateCommittedResource3 (vtbl[76])");
 }

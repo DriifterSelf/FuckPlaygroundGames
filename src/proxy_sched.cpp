@@ -200,8 +200,12 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                 //    THEY MUST ALL REMAIN TOGETHER ON P-CORES to eliminate barrier wait stalls,
                                 //    convoy stalls, and cross-cluster L3 cache bouncing!
                                 // 2. Background Streaming & Decompression Workers (tpBasePri <= 8):
-                                //    Offloaded to Gracemont E-Cores (0xF000) with 2-window (1s) hysteresis
-                                //    only when sustained frame work > ECoreThresholdMs (8ms).
+                                //    Dedicated to Gracemont E-Cores (0xF000) so Oodle texture decompression,
+                                //    chunk streaming, DirectStorage I/O, audio streaming buffers, and telemetry
+                                //    run in parallel on efficiency cores without stealing P-Core cycles or L2 cache!
+                                // 3. Sustained Burst Overflow (> 8ms on background workers):
+                                //    If a background worker experiences heavy sustained frame work > ECoreThresholdMs (8ms),
+                                //    it is allowed to assist across All 16 Cores (0xFFFF) with 2-window hysteresis.
                                 if (te.tpBasePri >= 9) {
                                     if (sample && sample->last_affinity_type != 1) {
                                         SetThreadAffinityMask(hThread, s_p_core_mask);
@@ -214,7 +218,11 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     }
                                     pCorePinned++;
                                 } else {
-                                    int desired = (frameWorkMs > (float)g_cfg.ecore_threshold_ms) ? 2 : 1;
+                                    // Background worker: default to E-Cores (desired = 2).
+                                    // If exceeding heavy threshold (>8ms), allow burst onto All Cores (desired = 3).
+                                    int desired = (frameWorkMs > (float)g_cfg.ecore_threshold_ms) ? 3 : 2;
+                                    DWORD_PTR targetMask = (desired == 3) ? s_all_cores_mask : s_e_core_mask;
+
                                     if (sample) {
                                         if (sample->pending_affinity_type == desired) {
                                             sample->pending_count++;
@@ -225,24 +233,24 @@ static DWORD WINAPI GovernorThread(LPVOID) {
 
                                         // Apply hysteresis: require 2 consecutive samples (1.0s) before migrating
                                         if (sample->pending_count >= 2 && sample->last_affinity_type != desired) {
-                                            SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
+                                            SetThreadAffinityMask(hThread, targetMask);
                                             if (sample->last_affinity_type != 0) {
                                                 InterlockedIncrement(&g_tel.sched_migrations);
                                             }
                                             sample->last_affinity_type = desired;
                                         } else if (sample->last_affinity_type == 0) {
-                                            SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
+                                            SetThreadAffinityMask(hThread, targetMask);
                                             sample->last_affinity_type = desired;
                                         }
 
-                                        if (sample->last_affinity_type == 2) {
+                                        if (sample->last_affinity_type == 2 || sample->last_affinity_type == 3) {
                                             eCoreActive++;
                                         } else {
                                             pCorePinned++;
                                         }
                                     } else {
-                                        SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
-                                        if (desired == 2) eCoreActive++; else pCorePinned++;
+                                        SetThreadAffinityMask(hThread, targetMask);
+                                        eCoreActive++;
                                     }
                                 }
 
