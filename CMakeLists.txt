@@ -9,6 +9,8 @@ add_library(amd_ags_x64 SHARED
     src/proxy_log.cpp
     src/proxy_vram.cpp
     src/proxy_guard.cpp
+    src/proxy_dx12.cpp
+    src/proxy_sched.cpp
     src/proxy_overlay.cpp
 )
 
