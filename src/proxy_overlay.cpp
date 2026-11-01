@@ -184,8 +184,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3n. Hardware Command Queue Priority Elevation
         char qBuf[140];
-        sprintf_s(qBuf, " |-- HW Queue Priority: [ACTIVE] (%ld Compute / %ld DMA Copy Elevated)",
-                  g_tel.d3d12_compute_queues_elevated, g_tel.d3d12_copy_queues_elevated);
+        sprintf_s(qBuf, " |-- HW Queue Priority: [ACTIVE] (Direct 3D High Priority | Async Queues Concurrent)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, qBuf, (int)strlen(qBuf));
         y += step;
@@ -213,7 +212,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
         y += step;
 
-        // 4. Dynamic CPU Governor (8ms Threshold) + MMCSS
+        // 4. Deterministic CPU Cluster Governor + MMCSS
         char schedBuf[160];
         if (g_cfg.hybrid_governor) {
             sprintf_s(schedBuf, "[+] CPU Governor: [ACTIVE] 16T (%ld P-Core Engine | %ld E-Core Stream | MMCSS %s)",
