@@ -150,7 +150,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3j. Audio Compute & Ray Tracing (Hardware Offload)
         char audBuf[140];
-        sprintf_s(audBuf, " |-- Audio Compute & RT: [PoC / HW READY] (Queue Staged - CPU Wwise DSP Active)",
+        sprintf_s(audBuf, " |-- Audio Compute & RT: [PoC / HW READY] (%ld queries / Queue Staged - CPU Wwise DSP Active)",
                   g_tel.d3d12_audio_queries);
         SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, audBuf, (int)strlen(audBuf));

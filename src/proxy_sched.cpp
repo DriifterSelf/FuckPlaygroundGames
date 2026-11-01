@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <stdio.h>
+#include <ctype.h>
 #include "proxy_common.h"
 
 static DWORD_PTR s_p_core_mask = 0;
@@ -61,8 +62,17 @@ typedef BOOL (WINAPI *PFN_SetProcessInformation)(
     DWORD ProcessInformationSize
 );
 
+typedef LONG (NTAPI *PFN_NtQueryInformationThread)(
+    HANDLE ThreadHandle,
+    ULONG ThreadInformationClass,
+    PVOID ThreadInformation,
+    ULONG ThreadInformationLength,
+    PULONG ReturnLength
+);
+
 static PFN_SetThreadInformation s_pfnSetThreadInformation = NULL;
 static PFN_SetProcessInformation s_pfnSetProcessInformation = NULL;
+static PFN_NtQueryInformationThread s_pfnNtQueryInformationThread = NULL;
 static bool s_qos_initialized = false;
 
 static void InitQoSFunctions() {
@@ -72,6 +82,10 @@ static void InitQoSFunctions() {
         if (hKernel) {
             s_pfnSetThreadInformation = (PFN_SetThreadInformation)GetProcAddress(hKernel, "SetThreadInformation");
             s_pfnSetProcessInformation = (PFN_SetProcessInformation)GetProcAddress(hKernel, "SetProcessInformation");
+        }
+        HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+        if (hNtdll) {
+            s_pfnNtQueryInformationThread = (PFN_NtQueryInformationThread)GetProcAddress(hNtdll, "NtQueryInformationThread");
         }
     }
 }
@@ -288,13 +302,38 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     cluster = 2;
                                     eCoreActive++;
 
-                                    // Background EcoQoS (Power Throttling execution speed controlled)
+                                    // Check if thread belongs to graphics driver (amdxx64.dll / amdxc64.dll):
+                                    // AMD D3D12 Driver submission/compilation workers must NOT be throttled with EcoQoS
+                                    // to prevent GPU feed starvation (keeps high-speed command list packaging and descriptors)!
+                                    bool isDriverWorker = false;
+                                    if (s_pfnNtQueryInformationThread) {
+                                        void* startAddr = NULL;
+                                        if (s_pfnNtQueryInformationThread(hThread, 9 /* ThreadQuerySetWin32StartAddress */, &startAddr, sizeof(startAddr), NULL) == 0 && startAddr) {
+                                            HMODULE hMod = NULL;
+                                            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)startAddr, &hMod) && hMod) {
+                                                char modPath[MAX_PATH] = {};
+                                                if (GetModuleFileNameA(hMod, modPath, MAX_PATH)) {
+                                                    char lowerMod[MAX_PATH] = {};
+                                                    for (int i = 0; modPath[i] && i < MAX_PATH - 1; i++) lowerMod[i] = (char)tolower((unsigned char)modPath[i]);
+                                                    if (strstr(lowerMod, "amd") != NULL || strstr(lowerMod, "ati") != NULL) {
+                                                        isDriverWorker = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Background QoS: EcoQoS for generic background threads, High QoS (EcoQoS OFF) for driver workers
                                     if (s_pfnSetThreadInformation) {
                                         PROXY_POWER_THROTTLING_STATE tpts = {};
                                         tpts.Version = PROXY_POWER_THROTTLING_CURRENT_VERSION;
                                         tpts.ControlMask = PROXY_POWER_THROTTLING_EXECUTION_SPEED;
-                                        tpts.StateMask = PROXY_POWER_THROTTLING_EXECUTION_SPEED; // EcoQoS
+                                        tpts.StateMask = isDriverWorker ? 0 : PROXY_POWER_THROTTLING_EXECUTION_SPEED;
                                         s_pfnSetThreadInformation(hThread, 3 /* ThreadPowerThrottling */, &tpts, sizeof(tpts));
+                                    }
+
+                                    if (isDriverWorker) {
+                                        log_msg("[SCHED] TID %lu identified as AMD Driver Worker: EcoQoS DISABLED (High QoS maintained on E-Cores).", te.th32ThreadID);
                                     }
                                 }
 
