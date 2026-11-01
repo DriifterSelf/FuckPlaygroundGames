@@ -296,7 +296,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
-        WS_POPUP | WS_VISIBLE,
+        WS_POPUP | (s_visible ? WS_VISIBLE : 0),
         25, 25, 640, 435,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
@@ -310,8 +310,11 @@ static DWORD WINAPI OverlayThread(LPVOID) {
 
     // Set 88% opacity (alpha = 225)
     SetLayeredWindowAttributes(s_hwnd, 0, 225, LWA_ALPHA);
+    if (!s_visible) {
+        ShowWindow(s_hwnd, SW_HIDE);
+    }
     g_tel.st_overlay = st_ok;
-    log_msg("[OVERLAY] Overlay window created at (25, 25). Toggle key: %d", g_cfg.overlay_key);
+    log_msg("[OVERLAY] Overlay window created at (25, 25) (visible=%d). Toggle key: %d (F10 / Insert)", s_visible, g_cfg.overlay_key);
 
     MSG msg;
     DWORD lastTick = GetTickCount();
@@ -343,11 +346,9 @@ static DWORD WINAPI OverlayThread(LPVOID) {
 }
 
 void overlay_start() {
-    if (!g_cfg.overlay) {
-        g_tel.st_overlay = st_disabled;
-        log_msg("[OVERLAY] Overlay disabled by configuration (Overlay=0).");
-        return;
-    }
+    // Spawn overlay thread so hotkey listener (F10 / Insert) is always active.
+    // If Overlay=0 in config, window starts hidden and can be toggled at any time.
+    s_visible = (g_cfg.overlay != 0);
 
     HANDLE hThread = CreateThread(NULL, 0, OverlayThread, NULL, 0, NULL);
     if (hThread) {
