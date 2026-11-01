@@ -24,12 +24,6 @@ typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 );
 
-typedef HRESULT (STDMETHODCALLTYPE *PFN_QueryInterface)(
-    ID3D12Device* This,
-    REFIID riid,
-    void** ppvObject
-);
-
 typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource)(
     ID3D12Device* This,
     const D3D12_HEAP_PROPERTIES* pHeapProperties,
@@ -105,7 +99,6 @@ typedef HRESULT (STDMETHODCALLTYPE *PFN_CreateCommittedResource3)(
     void** ppvResource
 );
 
-static PFN_QueryInterface s_orig_qi = NULL;
 static PFN_CreateCommandQueue s_orig_ccq = NULL;
 static PFN_CheckFeatureSupport s_orig_cfs = NULL;
 static PFN_CreateShaderResourceView s_orig_csrv = NULL;
@@ -868,18 +861,6 @@ static HRESULT STDMETHODCALLTYPE Hook_CreateCommittedResource3(
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE Hook_QueryInterface(
-    ID3D12Device* This,
-    REFIID riid,
-    void** ppvObject
-) {
-    HRESULT hr = s_orig_qi(This, riid, ppvObject);
-    if (SUCCEEDED(hr) && ppvObject && *ppvObject) {
-        dx12_hook_install((ID3D12Device*)*ppvObject);
-    }
-    return hr;
-}
-
 static void HookVtblEntry(void** slot, void* hookFunc, void** origFunc, const char* name) {
     if (*slot != hookFunc) {
         DWORD oldProtect;
@@ -897,10 +878,13 @@ static void HookVtblEntry(void** slot, void* hookFunc, void** origFunc, const ch
 void dx12_hook_install(ID3D12Device* pDevice) {
     if (!pDevice) return;
 
+    static bool s_installed = false;
+    if (s_installed) return;
+    s_installed = true;
+
     void** vtbl = *(void***)pDevice;
     if (!vtbl) return;
 
-    HookVtblEntry(&vtbl[0], (void*)Hook_QueryInterface, (void**)&s_orig_qi, "ID3D12Device::QueryInterface (vtbl[0])");
     HookVtblEntry(&vtbl[8], (void*)Hook_CreateCommandQueue, (void**)&s_orig_ccq, "ID3D12Device::CreateCommandQueue (vtbl[8])");
     HookVtblEntry(&vtbl[13], (void*)Hook_CheckFeatureSupport, (void**)&s_orig_cfs, "ID3D12Device::CheckFeatureSupport (vtbl[13])");
     HookVtblEntry(&vtbl[18], (void*)Hook_CreateShaderResourceView, (void**)&s_orig_csrv, "ID3D12Device::CreateShaderResourceView (vtbl[18])");
