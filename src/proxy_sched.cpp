@@ -16,7 +16,9 @@ struct ThreadSample {
     ULONGLONG last_total_time;
     DWORD last_tick;
     float last_frame_work_ms;
-    int last_affinity_type; // 1 = P-Core, 2 = E-Core
+    int last_affinity_type;    // 1 = P-Core, 2 = E-Core
+    int pending_affinity_type; // Hysteresis candidate
+    int pending_count;         // Hysteresis consecutive windows
 };
 
 static ThreadSample s_tracker[MAX_TRACKED_THREADS] = {};
@@ -32,6 +34,9 @@ static ThreadSample* FindOrCreateSample(DWORD tid) {
         s->last_total_time = 0;
         s->last_tick = GetTickCount();
         s->last_frame_work_ms = 0.0f;
+        s->last_affinity_type = 0;
+        s->pending_affinity_type = 0;
+        s->pending_count = 0;
         return s;
     }
     return NULL;
@@ -187,34 +192,58 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                                     }
                                 }
 
-                                // DYNAMIC 8ms SCHEDULING RULE:
-                                // 1. Elevated-priority threads (tpBasePri >= 10: main loop, render submission, audio)
-                                //    MUST ALWAYS remain on P-Cores (0x0FFF) at 4.6 GHz to prevent convoy stalls.
-                                // 2. Heavy sustained background workers (frameWorkMs > ECoreThresholdMs, e.g. > 8ms):
-                                //    Offloaded directly to E-Cores (0xF000) so Oodle decompression and chunk streaming
-                                //    chew through background work without stealing cycles or cache from P-Cores.
-                                // 3. Interactive/lightweight workers (frameWorkMs <= ECoreThresholdMs):
-                                //    Pinned to P-Cores (0x0FFF) for low latency.
-                                int targetAffinityType = 1; // 1 = P-Core, 2 = E-Core
-                                if (te.tpBasePri >= 10) {
-                                    targetAffinityType = 1;
-                                    SetThreadAffinityMask(hThread, s_p_core_mask);
-                                    pCorePinned++;
-                                } else if (frameWorkMs > (float)g_cfg.ecore_threshold_ms) {
-                                    targetAffinityType = 2;
-                                    SetThreadAffinityMask(hThread, s_e_core_mask);
-                                    eCoreActive++;
-                                } else {
-                                    targetAffinityType = 1;
-                                    SetThreadAffinityMask(hThread, s_p_core_mask);
-                                    pCorePinned++;
-                                }
-
-                                if (sample) {
-                                    if (sample->last_affinity_type != 0 && sample->last_affinity_type != targetAffinityType) {
-                                        InterlockedIncrement(&g_tel.sched_migrations);
+                                // HYBRID SCHEDULING RULE FOR INTEL 13TH GEN (6P + 4E = 16T):
+                                // 1. Frame-Critical & TaskGraph Worker Pool (tpBasePri >= 9):
+                                //    Includes: Main loop (15), Render submission (10), Physics (10), Audio (10),
+                                //    and all 8 TaskGraph workers (9). Exactly 12 threads match the 12 logical
+                                //    threads of the 6 P-Cores (0x0FFF) at 4.6 GHz!
+                                //    THEY MUST ALL REMAIN TOGETHER ON P-CORES to eliminate barrier wait stalls,
+                                //    convoy stalls, and cross-cluster L3 cache bouncing!
+                                // 2. Background Streaming & Decompression Workers (tpBasePri <= 8):
+                                //    Offloaded to Gracemont E-Cores (0xF000) with 2-window (1s) hysteresis
+                                //    only when sustained frame work > ECoreThresholdMs (8ms).
+                                if (te.tpBasePri >= 9) {
+                                    if (sample && sample->last_affinity_type != 1) {
+                                        SetThreadAffinityMask(hThread, s_p_core_mask);
+                                        if (sample->last_affinity_type != 0) {
+                                            InterlockedIncrement(&g_tel.sched_migrations);
+                                        }
+                                        sample->last_affinity_type = 1;
+                                    } else if (!sample) {
+                                        SetThreadAffinityMask(hThread, s_p_core_mask);
                                     }
-                                    sample->last_affinity_type = targetAffinityType;
+                                    pCorePinned++;
+                                } else {
+                                    int desired = (frameWorkMs > (float)g_cfg.ecore_threshold_ms) ? 2 : 1;
+                                    if (sample) {
+                                        if (sample->pending_affinity_type == desired) {
+                                            sample->pending_count++;
+                                        } else {
+                                            sample->pending_affinity_type = desired;
+                                            sample->pending_count = 1;
+                                        }
+
+                                        // Apply hysteresis: require 2 consecutive samples (1.0s) before migrating
+                                        if (sample->pending_count >= 2 && sample->last_affinity_type != desired) {
+                                            SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
+                                            if (sample->last_affinity_type != 0) {
+                                                InterlockedIncrement(&g_tel.sched_migrations);
+                                            }
+                                            sample->last_affinity_type = desired;
+                                        } else if (sample->last_affinity_type == 0) {
+                                            SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
+                                            sample->last_affinity_type = desired;
+                                        }
+
+                                        if (sample->last_affinity_type == 2) {
+                                            eCoreActive++;
+                                        } else {
+                                            pCorePinned++;
+                                        }
+                                    } else {
+                                        SetThreadAffinityMask(hThread, (desired == 2) ? s_e_core_mask : s_p_core_mask);
+                                        if (desired == 2) eCoreActive++; else pCorePinned++;
+                                    }
                                 }
 
                                 CloseHandle(hThread);
