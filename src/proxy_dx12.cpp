@@ -170,23 +170,23 @@ static HRESULT STDMETHODCALLTYPE Hook_CreateCommandQueue(
 ) {
     if (pDesc && g_cfg.compute_offload) {
         D3D12_COMMAND_QUEUE_DESC mod_desc = *pDesc;
-        if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
-            // Elevate Compute Command Queue to High Priority for guaranteed low-latency dispatch
-            // (Used by Audio Raytracing, Hi-Z Occlusion Culling, and Compute Skinning)
+        if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+            // Elevate Direct 3D graphics queue to HIGH_PRIORITY so rasterization and geometry are NEVER preempted
             mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
-            InterlockedIncrement(&g_tel.d3d12_compute_queues_elevated);
-            log_msg("[DX12] [QUEUE] Elevating Compute Command Queue to HIGH_PRIORITY");
             HRESULT hr = s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
-            if (SUCCEEDED(hr)) return hr;
+            if (SUCCEEDED(hr)) {
+                log_msg("[DX12] [QUEUE] Direct 3D Command Queue elevated to HIGH_PRIORITY (Zero Preemption)");
+                return hr;
+            }
             return s_orig_ccq(This, pDesc, riid, ppCommandQueue);
+        } else if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
+            // Async Compute runs at NORMAL priority (concurrent without starving graphics)
+            mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+            return s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
         } else if (mod_desc.Type == D3D12_COMMAND_LIST_TYPE_COPY) {
-            // Elevate Copy Command Queue to High Priority for seamless DMA texture streaming
-            mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
-            InterlockedIncrement(&g_tel.d3d12_copy_queues_elevated);
-            log_msg("[DX12] [QUEUE] Elevating Copy Command Queue to HIGH_PRIORITY");
-            HRESULT hr = s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
-            if (SUCCEEDED(hr)) return hr;
-            return s_orig_ccq(This, pDesc, riid, ppCommandQueue);
+            // Copy DMA queue runs at NORMAL priority so texture streaming never halts 3D frame render
+            mod_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+            return s_orig_ccq(This, &mod_desc, riid, ppCommandQueue);
         }
     }
     return s_orig_ccq(This, pDesc, riid, ppCommandQueue);

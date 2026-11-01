@@ -254,8 +254,10 @@ static DWORD WINAPI GovernorThread(LPVOID) {
                 // Pass 2: Assign Topology-Isolated Affinities
                 LONG pCorePinned = 0;
                 LONG eCoreActive = 0;
-                DWORD_PTR worker_mask = (s_all_cores_mask & ~0x000F); // Logical 4..15 (excludes Physical Cores 0 & 1)
-                if (worker_mask == 0) worker_mask = s_all_cores_mask;
+                // Frame-critical TaskGraph workers MUST execute on identical-frequency Performance Cores (4.6 GHz)
+                // to prevent Gracemont E-Core convoy stalls and barrier latency jitter:
+                DWORD_PTR worker_mask = (s_p_core_mask & ~0x000F); // Logical 4..11 (0x0FF0 on 12-thread P-Core CPUs)
+                if (worker_mask == 0) worker_mask = s_p_core_mask;
 
                 for (int i = 0; i < scannedCount; i++) {
                     DWORD tid = scanned[i].tid;

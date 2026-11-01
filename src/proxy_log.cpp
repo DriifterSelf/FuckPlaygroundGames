@@ -51,7 +51,7 @@ void open_log_and_config()
     s_log = _wfsopen(log_path, L"w", _SH_DENYNO);
 
     swprintf_s(s_ini_path, L"%s\\rdna4_ags_proxy.ini", base);
-    write_default(L"Overlay", L"1");
+    write_default(L"Overlay", L"0");
     write_default(L"OverlayToggleKey", L"121");
     write_default(L"VramUncap", L"1");
     write_default(L"VramMarginPercent", L"8");
@@ -61,7 +61,7 @@ void open_log_and_config()
     write_default(L"HybridCoreGovernor", L"1");
     write_default(L"ECoreThresholdMs", L"8");
 
-    g_cfg.overlay = GetPrivateProfileIntW(L"proxy", L"Overlay", 1, s_ini_path);
+    g_cfg.overlay = GetPrivateProfileIntW(L"proxy", L"Overlay", 0, s_ini_path);
     g_cfg.overlay_key = GetPrivateProfileIntW(L"proxy", L"OverlayToggleKey", VK_F10, s_ini_path);
     g_cfg.vram_uncap = GetPrivateProfileIntW(L"proxy", L"VramUncap", 1, s_ini_path);
     g_cfg.vram_margin_percent = GetPrivateProfileIntW(L"proxy", L"VramMarginPercent", 8, s_ini_path);

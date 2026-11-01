@@ -3,14 +3,15 @@ import time
 import ctypes
 from ctypes import wintypes
 
-pid = 26000
-try:
-    p = psutil.Process(pid)
-except Exception as e:
-    print(f"Error opening PID {pid}: {e}")
+# Find PID of forzahorizon6
+pids = [p.pid for p in psutil.process_iter(['name']) if p.info['name'] and 'forzahorizon6' in p.info['name'].lower()]
+if not pids:
+    print("forzahorizon6.exe not running")
     exit(1)
 
-print(f"Profiling PID {pid} ({p.name()}) for 3.0 seconds...")
+pid = pids[0]
+p = psutil.Process(pid)
+print(f"Profiling PID {pid} ({p.name()}) for 2.0 seconds...")
 
 class THREAD_BASIC_INFORMATION(ctypes.Structure):
     _fields_ = [
@@ -40,7 +41,7 @@ def get_thread_info(tid):
 
 t0 = time.perf_counter()
 initial_threads = {t.id: (t.user_time, t.system_time) for t in p.threads()}
-time.sleep(3.0)
+time.sleep(2.0)
 final_threads = {t.id: (t.user_time, t.system_time) for t in p.threads()}
 t1 = time.perf_counter()
 wall_time = t1 - t0
@@ -61,18 +62,9 @@ for tid, (u1, s1) in final_threads.items():
 thread_stats.sort(key=lambda x: x[1], reverse=True)
 
 print("\n" + "=" * 90)
-print(f"{'TID':>6} | {'Total%':>7} | {'User%':>6} | {'Sys%':>6} | {'Pri':>3} | {'Base':>4} | {'Affinity':>8} | Role / Classification")
+print(f"{'TID':>6} | {'Total%':>7} | {'User%':>6} | {'Sys%':>6} | {'Pri':>3} | {'Base':>4} | {'Affinity':>8} | State / Activity")
 print("=" * 90)
 
-for tid, pct, up, sp, base_pri, pri, aff in thread_stats[:25]:
-    role = "Unknown"
-    if tid == 32816: role = ">>> RENDER THREAD (D3D12 Submission) <<<"
-    elif tid == 3584: role = ">>> MAIN ENGINE THREAD (Game Loop) <<<"
-    elif tid == 34204: role = "AUDIO MIXER / RAYTRACING (Time Critical)"
-    elif tid == 13272: role = "PHYSICS SIMULATION (Vehicle Dynamics)"
-    elif pct >= 35.0: role = f"TaskGraph Worker Pool"
-    elif pct >= 15.0: role = "Streaming / Oodle Decompression"
-    elif pct >= 5.0:  role = "Driver / DX12 Worker"
-    else: role = "Background / Idle"
-    print(f"{tid:6d} | {pct:6.2f}% | {up:5.2f}% | {sp:5.2f}% | {pri:3d} | {base_pri:4d} | 0x{aff:04X} | {role}")
+for tid, pct, up, sp, base_pri, pri, aff in thread_stats[:20]:
+    print(f"{tid:6d} | {pct:6.2f}% | {up:5.2f}% | {sp:5.2f}% | {pri:3d} | {base_pri:4d} | 0x{aff:04X}")
 print("=" * 90)
