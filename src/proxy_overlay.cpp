@@ -85,15 +85,15 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3a. Mesh Shaders & Cluster Culling
         char meshBuf[140];
-        sprintf_s(meshBuf, " |-- Mesh Shaders T1: [ACTIVE] (GPU Cluster & Meshlet Culling)");
-        SetTextColor(hdc, RGB(70, 240, 140));
+        sprintf_s(meshBuf, " |-- Mesh Shaders T1: [PoC / HW READY] (D3D12 Feature Staged)");
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, meshBuf, (int)strlen(meshBuf));
         y += step;
 
         // 3b. Inline RayQuery Compute
         char rqBuf[140];
-        sprintf_s(rqBuf, " |-- Inline RayQuery: [ACTIVE] (DXR Tier 1.1 Compute Shaders)");
-        SetTextColor(hdc, RGB(70, 240, 140));
+        sprintf_s(rqBuf, " |-- Inline RayQuery: [PoC / HW READY] (DXR Tier 1.1 Staged)");
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, rqBuf, (int)strlen(rqBuf));
         y += step;
 
@@ -142,36 +142,35 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3i. Compute Skinning & Deformation (Body Flex, Wing Flex, Tyre Deformation)
         char skinBuf[140];
-        sprintf_s(skinBuf, " |-- Compute Skinning: [ACTIVE] (%ld queries / Meshlet Body & Tyre Flex)",
+        sprintf_s(skinBuf, " |-- Compute Skinning: [PoC / HW READY] (%ld queries / Format Staged)",
                   g_tel.d3d12_skinning_queries);
-        SetTextColor(hdc, RGB(70, 240, 140));
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, skinBuf, (int)strlen(skinBuf));
         y += step;
 
         // 3j. Audio Compute & Ray Tracing (Hardware Offload)
         char audBuf[140];
-        sprintf_s(audBuf, " |-- Audio Compute & RT: [ACTIVE] (%ld queries / Realtime Async Queue)",
+        sprintf_s(audBuf, " |-- Audio Compute & RT: [PoC / HW READY] (Queue Staged - CPU Wwise DSP Active)",
                   g_tel.d3d12_audio_queries);
-        SetTextColor(hdc, RGB(70, 240, 140));
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, audBuf, (int)strlen(audBuf));
         y += step;
 
         // 3k. GPU-Driven Pipeline & Work Graphs
         char gdpBuf[140];
         if (g_tel.d3d12_execute_indirect_1_1 && g_tel.d3d12_work_graphs) {
-            sprintf_s(gdpBuf, " |-- GPU-driven Pipeline: [ACTIVE] (ExecuteIndirect 1.1 & WorkGraphs T1)");
-            SetTextColor(hdc, RGB(70, 240, 140));
+            sprintf_s(gdpBuf, " |-- GPU-driven Pipeline: [PoC / HW READY] (ExecuteIndirect 1.1 & WorkGraphs T1 Staged)");
         } else {
-            sprintf_s(gdpBuf, " |-- GPU-driven Pipeline: [ACTIVE] (ExecuteIndirect 1.1 Injected)");
-            SetTextColor(hdc, RGB(70, 240, 140));
+            sprintf_s(gdpBuf, " |-- GPU-driven Pipeline: [PoC / HW READY] (ExecuteIndirect 1.1 Staged)");
         }
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, gdpBuf, (int)strlen(gdpBuf));
         y += step;
 
         // 3l. Hardware Predication (Zero-CPU Occlusion Culling)
         char predBuf[140];
-        sprintf_s(predBuf, " |-- HW Predication: [ACTIVE] (Zero-CPU Occlusion Culling)");
-        SetTextColor(hdc, RGB(70, 240, 140));
+        sprintf_s(predBuf, " |-- HW Predication: [PoC / HW READY] (Predication Staged)");
+        SetTextColor(hdc, RGB(220, 200, 90));
         TextOutA(hdc, 10, y, predBuf, (int)strlen(predBuf));
         y += step;
 

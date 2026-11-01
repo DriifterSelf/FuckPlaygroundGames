@@ -363,9 +363,11 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_COMMAND_QUEUE_PRIORITY: {
+            // [PROOF OF CONCEPT / FORWARD-COMPATIBILITY STUB]
             // Feature 20: Realtime Async Compute Queue for Hardware Audio Simulation & Ray Tracing
-            // Enables the engine (ForzaTech/Wwise) to dispatch low-latency sound propagation,
-            // acoustic impulse response, and sound raytracing directly to GPU compute queues.
+            // Enables the engine (ForzaTech/Wwise) to dispatch low-latency sound propagation
+            // directly to GPU compute queues once Playground Games enables GPU audio DSP.
+            // (DISCLAIMER: In current ForzaTech builds, Audiokinetic Wwise DSP runs on CPU threads).
             D3D12_FEATURE_DATA_COMMAND_QUEUE_PRIORITY* cqp = (D3D12_FEATURE_DATA_COMMAND_QUEUE_PRIORITY*)pFeatureSupportData;
             if (cqp->CommandListType == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
                 cqp->PriorityForTypeIsSupported = TRUE;
@@ -453,7 +455,10 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
+            // [PROOF OF CONCEPT / FORWARD-COMPATIBILITY STUB]
             // Feature 32: Mesh Shader Tier 1 (GPU cluster culling) & Sampler Feedback Tier 1.0 (Hardware Streaming Min-Map)
+            // Pre-staged for when Playground Games introduces native meshlet rendering.
+            // (DISCLAIMER: Current ForzaTech builds execute world frustum culling on CPU TaskGraph workers).
             D3D12_FEATURE_DATA_D3D12_OPTIONS7* opt7 = (D3D12_FEATURE_DATA_D3D12_OPTIONS7*)pFeatureSupportData;
             if (opt7->MeshShaderTier < D3D12_MESH_SHADER_TIER_1) {
                 opt7->MeshShaderTier = D3D12_MESH_SHADER_TIER_1;
@@ -575,13 +580,15 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_PREDICATION: {
+            // [PROOF OF CONCEPT / FORWARD-COMPATIBILITY STUB]
             // Feature 50: Hardware Predication (Zero-CPU Occlusion Culling)
+            // Pre-staged for future updates with GPU predication query buffers.
             D3D12_FEATURE_DATA_PREDICATION* pred = (D3D12_FEATURE_DATA_PREDICATION*)pFeatureSupportData;
             pred->Supported = TRUE;
             g_tel.d3d12_predication = 1;
             if (!(s_injected_logged_mask & (1ULL << 50))) {
                 s_injected_logged_mask |= (1ULL << 50);
-                log_msg("[DX12] [INJECT] Enabled Hardware Predication (Zero-CPU GPU Occlusion Culling)");
+                log_msg("[DX12] [INJECT] Enabled Hardware Predication [PoC / Forward-Staged]");
             }
             break;
         }
@@ -599,7 +606,9 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS21: {
+            // [PROOF OF CONCEPT / FORWARD-COMPATIBILITY STUB]
             // Feature 53: Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 (GPU-Driven Execution)
+            // Pre-staged for modern GPU-driven rendering pipelines.
             D3D12_FEATURE_DATA_D3D12_OPTIONS21* opt21 = (D3D12_FEATURE_DATA_D3D12_OPTIONS21*)pFeatureSupportData;
             opt21->WorkGraphsTier = D3D12_WORK_GRAPHS_TIER_1_0;
             opt21->ExecuteIndirectTier = D3D12_EXECUTE_INDIRECT_TIER_1_1;
@@ -609,7 +618,7 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             g_tel.d3d12_execute_indirect_1_1 = 1;
             if (!(s_injected_logged_mask & (1ULL << 53))) {
                 s_injected_logged_mask |= (1ULL << 53);
-                log_msg("[DX12] [INJECT] Enabled Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 (GPU-Driven Pipeline)");
+                log_msg("[DX12] [INJECT] Enabled Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 [PoC / Forward-Staged]");
             }
             break;
         }
