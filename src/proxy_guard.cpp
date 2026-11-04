@@ -81,15 +81,17 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                     }
                 }
 
-                // CASE 3: Secondary NULL-Read Dereference on 3D Model / Vertex Buffers
-                // Instruction reading from null address ([0x0] to [0x1000]) in model/particle rendering pipeline
-                // Found at RVA 0x33B6E83 and RVA 0x33BDFE3 in forzahorizon6.exe
-                if (isWrite == 0 && (faultAddr == 0 || faultAddr < 0x1000)) {
-                    if (rva == 0x033B6E83 || rva == 0x033BDFE3 || (rva >= 0x033B0000 && rva <= 0x033E0000)) {
+                // CASE 3: Secondary NULL/Poison Dereference & Dead Object Cleanup
+                // Instruction reading from null address ([0x0] to [0x10000]) or poison pointer (0xCC...)
+                // Found at RVA 0x33B6E83, 0x33BDFE3, 0x33BDFE6, and 0x5BF0261 in forzahorizon6.exe
+                bool is_bad_addr = (faultAddr < 0x10000 || faultAddr >= 0x7FFF000000000000ULL || (faultAddr & 0xFFFF000000000000ULL) == 0xCCCC000000000000ULL);
+                if (isWrite == 0 && is_bad_addr) {
+                    if (rva == 0x05BF0261 || (rva >= 0x05BE0000 && rva <= 0x05C10000) ||
+                        rva == 0x033B6E83 || rva == 0x033BDFE3 || (rva >= 0x033B0000 && rva <= 0x033E0000)) {
                         LONG hit = InterlockedIncrement(&g_tel.guard_hits);
                         InterlockedIncrement(&g_tel.guard_suppressed);
 
-                        log_msg("[GUARD] Intercepted secondary NULL-read dereference #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Opcode=%02X %02X %02X %02X). Rescuing context.",
+                        log_msg("[GUARD] Intercepted secondary invalid dereference #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Opcode=%02X %02X %02X %02X). Rescuing context.",
                                 hit, rip, rva, faultAddr, rip[0], rip[1], rip[2], rip[3]);
 
                         // Robust instruction length decoder for x86-64 memory load patterns:

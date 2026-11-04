@@ -49,18 +49,17 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
                 g_tel.os_budget_bytes = pVideoMemoryInfo->Budget;
 
                 UINT64 usage = pVideoMemoryInfo->CurrentUsage;
-                UINT64 target_budget = s_cached_max_safe_budget;
+                UINT64 os_budget = pVideoMemoryInfo->Budget;
 
-                // Dynamic pressure feedback loop:
-                // CRITICAL FIX: NEVER report target_budget < usage!
-                // If target_budget is reported lower than usage, the game engine's internal D3D12 allocator
-                // treats VRAM as exhausted and triggers an emergency E_OUTOFMEMORY (0x8007000E) fail-fast assert!
-                // We maintain the uncapped dedicated VRAM ceiling while guaranteeing a minimum 512 MB headroom.
-                if (usage + (1024ULL * 1024ULL * 1024ULL) > s_cached_max_safe_budget) {
-                    // Under high VRAM pressure, provide a dynamic ceiling matching usage + 512MB
-                    target_budget = (usage + 512ULL * 1024ULL * 1024ULL > s_cached_max_safe_budget)
-                                  ? (usage + 512ULL * 1024ULL * 1024ULL)
-                                  : s_cached_max_safe_budget;
+                // CRITICAL FIX: NEVER report target_budget lower than OS Budget or Current Usage!
+                // We uncap the budget up to the physical dedicated VRAM limit, but never restrict below what Windows already allows.
+                UINT64 target_budget = (s_cached_max_safe_budget > os_budget)
+                                     ? s_cached_max_safe_budget
+                                     : os_budget;
+
+                // Under high VRAM pressure, provide a dynamic ceiling with at least 1 GB headroom above usage
+                if (usage + (1024ULL * 1024ULL * 1024ULL) > target_budget) {
+                    target_budget = usage + (1024ULL * 1024ULL * 1024ULL);
                 }
 
                 pVideoMemoryInfo->Budget = target_budget;

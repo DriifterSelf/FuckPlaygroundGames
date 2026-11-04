@@ -371,15 +371,10 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS3: {
-            // Feature 21: Enable Async Copy Queue timestamps and casting for fast texture streaming
+            // Feature 21: Enable Async Copy Queue timestamps (Strictly preserve native typed format casting)
             D3D12_FEATURE_DATA_D3D12_OPTIONS3* opt3 = (D3D12_FEATURE_DATA_D3D12_OPTIONS3*)pFeatureSupportData;
             opt3->CopyQueueTimestampQueriesSupported = TRUE;
-            opt3->CastingFullyTypedFormatSupported = TRUE;
             g_tel.d3d12_async_copy = 1;
-            if (!(s_injected_logged_mask & (1ULL << 21))) {
-                s_injected_logged_mask |= (1ULL << 21);
-                log_msg("[DX12] [INJECT] Enabled Async Copy Queue & Typed Format Casting");
-            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS4: {
@@ -462,9 +457,8 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS8: {
-            // Feature 36: Unaligned Block Textures
-            D3D12_FEATURE_DATA_D3D12_OPTIONS8* opt8 = (D3D12_FEATURE_DATA_D3D12_OPTIONS8*)pFeatureSupportData;
-            opt8->UnalignedBlockTexturesSupported = TRUE;
+            // Feature 36: Strictly preserve native driver block textures
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS9: {
@@ -505,27 +499,18 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS13: {
-            // Feature 42: Unrestricted Vertex & Buffer Alignment
-            // CRITICAL FIX: Strictly preserve native AlphaBlendFactorSupported to prevent dual-source particle blend corruption!
-            D3D12_FEATURE_DATA_D3D12_OPTIONS13* opt13 = (D3D12_FEATURE_DATA_D3D12_OPTIONS13*)pFeatureSupportData;
-            opt13->UnrestrictedBufferTextureCopyPitchSupported = TRUE;
-            opt13->UnrestrictedVertexElementAlignmentSupported = TRUE;
-            opt13->TextureCopyBetweenDimensionsSupported = TRUE;
+            // Feature 42: Strictly preserve native driver vertex/buffer/texture alignment
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS14: {
-            // Feature 43: Advanced Texture Ops & Writeable MSAA
-            D3D12_FEATURE_DATA_D3D12_OPTIONS14* opt14 = (D3D12_FEATURE_DATA_D3D12_OPTIONS14*)pFeatureSupportData;
-            opt14->AdvancedTextureOpsSupported = TRUE;
-            opt14->WriteableMSAATexturesSupported = TRUE;
-            opt14->IndependentFrontAndBackStencilRefMaskSupported = TRUE;
+            // Feature 43: Strictly preserve native driver texture ops and MSAA writes
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS15: {
-            // Feature 44: Triangle Fan & Dynamic Index Buffer Strip Cut
-            D3D12_FEATURE_DATA_D3D12_OPTIONS15* opt15 = (D3D12_FEATURE_DATA_D3D12_OPTIONS15*)pFeatureSupportData;
-            opt15->TriangleFanSupported = TRUE;
-            opt15->DynamicIndexBufferStripCutSupported = TRUE;
+            // Feature 44: Strictly preserve native driver index buffers
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS16: {
@@ -540,10 +525,10 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS17: {
-            // Feature 46: Non-Normalized Coordinate Samplers for Direct Hi-Z Texel Sampling
-            D3D12_FEATURE_DATA_D3D12_OPTIONS17* opt17 = (D3D12_FEATURE_DATA_D3D12_OPTIONS17*)pFeatureSupportData;
-            opt17->NonNormalizedCoordinateSamplersSupported = TRUE;
-            opt17->ManualWriteTrackingResourceSupported = TRUE;
+            // Feature 46: CRITICAL FIX: Strictly preserve native driver sampler modes!
+            // Forcing NonNormalizedCoordinateSamplersSupported = TRUE causes ForzaTech's particle shaders
+            // to miscalculate billboard UV texture mapping, turning smooth transparent particles into solid PNG quads!
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS18: {
@@ -591,20 +576,8 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS21: {
-            // [PROOF OF CONCEPT / FORWARD-COMPATIBILITY STUB]
-            // Feature 53: Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 (GPU-Driven Execution)
-            // Pre-staged for modern GPU-driven rendering pipelines.
-            D3D12_FEATURE_DATA_D3D12_OPTIONS21* opt21 = (D3D12_FEATURE_DATA_D3D12_OPTIONS21*)pFeatureSupportData;
-            opt21->WorkGraphsTier = D3D12_WORK_GRAPHS_TIER_1_0;
-            opt21->ExecuteIndirectTier = D3D12_EXECUTE_INDIRECT_TIER_1_1;
-            opt21->SampleCmpGradientAndBiasSupported = TRUE;
-            opt21->ExtendedCommandInfoSupported = TRUE;
-            g_tel.d3d12_work_graphs = 1;
-            g_tel.d3d12_execute_indirect_1_1 = 1;
-            if (!(s_injected_logged_mask & (1ULL << 53))) {
-                s_injected_logged_mask |= (1ULL << 53);
-                log_msg("[DX12] [INJECT] Enabled Work Graphs Tier 1.0 & ExecuteIndirect Tier 1.1 [PoC / Forward-Staged]");
-            }
+            // Feature 53: Strictly preserve native driver execute indirect and sampling
+            injected = false;
             break;
         }
         default:
