@@ -430,24 +430,17 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         }
         case D3D12_FEATURE_D3D12_OPTIONS6: {
             // Feature 30: Variable Rate Shading & Background Processing
+            // Hardcoded in compiled binary: Unconditionally DISABLE Variable Rate Shading (VRS)
+            // Eliminates 2x2 / 4x4 coarsened particle blocks and restores 100% full-rate 1x1 shading
             D3D12_FEATURE_DATA_D3D12_OPTIONS6* opt6 = (D3D12_FEATURE_DATA_D3D12_OPTIONS6*)pFeatureSupportData;
-            if (g_cfg.disable_vrs) {
-                // Strictly DISABLE Variable Rate Shading (VRS)
-                // Prevents ForzaTech from coarsening particle shading into 2x2/4x4 pixelated chunks,
-                // restoring full-rate 1x1 per-pixel native shading on rain, spray, and smoke!
-                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED;
-                opt6->AdditionalShadingRatesSupported = FALSE;
-                opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = FALSE;
-                if (!(s_injected_logged_mask & (1ULL << 30))) {
-                    s_injected_logged_mask |= (1ULL << 30);
-                    log_msg("[DX12] [OPT] Variable Rate Shading (VRS) DISABLED -> Full-Rate 1x1 Native Shading on Particles & Rain.");
-                }
-            } else {
-                opt6->AdditionalShadingRatesSupported = TRUE;
-                opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = TRUE;
-                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
-            }
+            opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED;
+            opt6->AdditionalShadingRatesSupported = FALSE;
+            opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = FALSE;
             opt6->BackgroundProcessingSupported = TRUE;
+            if (!(s_injected_logged_mask & (1ULL << 30))) {
+                s_injected_logged_mask |= (1ULL << 30);
+                log_msg("[DX12] [COMPILED] Variable Rate Shading (VRS) permanently disabled in compiled binary.");
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS7: {
@@ -492,14 +485,10 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         }
         case D3D12_FEATURE_D3D12_OPTIONS10: {
             // Feature 39: Mesh Shader Shading Rate & Combiner for GPU Deformation & Skinning
+            // Hardcoded in compiled binary: Disable VRS Combiner and Primitive Shading Rate
             D3D12_FEATURE_DATA_D3D12_OPTIONS10* opt10 = (D3D12_FEATURE_DATA_D3D12_OPTIONS10*)pFeatureSupportData;
-            if (g_cfg.disable_vrs) {
-                opt10->VariableRateShadingSumCombinerSupported = FALSE;
-                opt10->MeshShaderPerPrimitiveShadingRateSupported = FALSE;
-            } else {
-                opt10->VariableRateShadingSumCombinerSupported = TRUE;
-                opt10->MeshShaderPerPrimitiveShadingRateSupported = TRUE;
-            }
+            opt10->VariableRateShadingSumCombinerSupported = FALSE;
+            opt10->MeshShaderPerPrimitiveShadingRateSupported = FALSE;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS11: {
