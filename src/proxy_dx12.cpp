@@ -932,10 +932,7 @@ void dx12_hook_install(ID3D12Device* pDevice) {
 
     HookVtblEntry(&vtbl[8], (void*)Hook_CreateCommandQueue, (void**)&s_orig_ccq, "ID3D12Device::CreateCommandQueue (vtbl[8])");
     HookVtblEntry(&vtbl[13], (void*)Hook_CheckFeatureSupport, (void**)&s_orig_cfs, "ID3D12Device::CheckFeatureSupport (vtbl[13])");
-    // NOTE: ID3D12Device::CreateShaderResourceView (vtbl[18]) is strictly UNHOOKED.
-    // Overriding Shader4ComponentMapping on BC4/BC5 textures destroyed sprite alpha channels,
-    // causing volumetric smoke and dust to render as opaque flat rectangular billboard "PNG" cutouts.
-    // Leaving native descriptor creation preserves full alpha transparency and gradient soft edges.
+    HookVtblEntry(&vtbl[18], (void*)Hook_CreateShaderResourceView, (void**)&s_orig_csrv, "ID3D12Device::CreateShaderResourceView (vtbl[18])");
     HookVtblEntry(&vtbl[27], (void*)Hook_CreateCommittedResource, (void**)&s_orig_ccr, "ID3D12Device::CreateCommittedResource (vtbl[27])");
     HookVtblEntry(&vtbl[28], (void*)Hook_CreateHeap, (void**)&s_orig_ch, "ID3D12Device::CreateHeap (vtbl[28])");
     HookVtblEntry(&vtbl[29], (void*)Hook_CreatePlacedResource, (void**)&s_orig_cpr, "ID3D12Device::CreatePlacedResource (vtbl[29])");
