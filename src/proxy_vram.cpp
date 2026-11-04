@@ -62,6 +62,17 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
                     target_budget = usage + (1024ULL * 1024ULL * 1024ULL);
                 }
 
+                // CRITICAL SAFETY CEILING:
+                // Never report more VRAM than physically exists minus 512 MB OS reserve!
+                // If target_budget exceeds physical VRAM, the engine over-allocates textures and triggers
+                // 0x8007000E (E_OUTOFMEMORY) in AMD's kernel allocator.
+                UINT64 hard_ceiling = (s_cached_dedicated > (512ULL * 1024ULL * 1024ULL))
+                                    ? (s_cached_dedicated - (512ULL * 1024ULL * 1024ULL))
+                                    : s_cached_dedicated;
+                if (target_budget > hard_ceiling) {
+                    target_budget = hard_ceiling;
+                }
+
                 pVideoMemoryInfo->Budget = target_budget;
                 g_tel.reported_budget_bytes = target_budget;
                 InterlockedIncrement(&g_tel.vram_uncap_hits);

@@ -3,6 +3,26 @@
 #include "proxy_common.h"
 
 static PVOID s_veh_handle = NULL;
+static uintptr_t s_d3d12core_base = 0;
+static uintptr_t s_d3d12core_end = 0;
+
+static void EnsureD3D12CoreBounds() {
+    if (s_d3d12core_base == 0) {
+        HMODULE hMod = GetModuleHandleW(L"D3D12Core.dll");
+        if (hMod) {
+            uint8_t* base = (uint8_t*)hMod;
+            IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+            if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+                IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+                if (nt->Signature == IMAGE_NT_SIGNATURE) {
+                    s_d3d12core_base = (uintptr_t)base;
+                    s_d3d12core_end = s_d3d12core_base + nt->OptionalHeader.SizeOfImage;
+                    log_msg("[GUARD] Detected D3D12Core.dll range: %p - %p", (void*)s_d3d12core_base, (void*)s_d3d12core_end);
+                }
+            }
+        }
+    }
+}
 
 static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
     if (pInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
@@ -153,6 +173,52 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         pInfo->ContextRecord->Rcx = 0;
                         pInfo->ContextRecord->R8 = 0;
                         pInfo->ContextRecord->Rip += instrLen;
+                        return EXCEPTION_CONTINUE_EXECUTION;
+                    }
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+        }
+
+        EnsureD3D12CoreBounds();
+
+        // Check if crash occurred inside D3D12Core.dll
+        if (s_d3d12core_base != 0 && (uintptr_t)rip >= s_d3d12core_base && (uintptr_t)rip < s_d3d12core_end) {
+            __try {
+                // CASE 4: D3D12Core ValidateBeginEndQuery on NULL QueryHeap
+                // Instruction: cmp r8d, dword ptr [rdx+64h] (4 bytes: 44 3B 42 64) with rdx == NULL
+                if (isWrite == 0 && (faultAddr == 0x64 || faultAddr < 0x100) && pInfo->ContextRecord->Rdx == 0) {
+                    if (rip[0] == 0x44 && rip[1] == 0x3B && rip[2] == 0x42 && rip[3] == 0x64) {
+                        LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                        InterlockedIncrement(&g_tel.guard_suppressed);
+                        log_msg("[GUARD] Rescued D3D12Core ValidateBeginEndQuery on NULL query heap #%ld at RIP=%p (RDX=0, R8=0x%llX). Bypassing to caller epilogue.",
+                                hit, rip, pInfo->ContextRecord->R8);
+
+                        // ValidateBeginEndQuery frame:
+                        // push r14 (+8), sub rsp, 30h (+0x30). Total offset from RSP to return address = 0x38.
+                        // Saved r14 is at [rsp + 0x30].
+                        // Return address is at [rsp + 0x38].
+                        uintptr_t* pRsp = (uintptr_t*)pInfo->ContextRecord->Rsp;
+                        pInfo->ContextRecord->R14 = pRsp[6]; // [rsp + 0x30]
+                        uintptr_t retAddr = pRsp[7];         // [rsp + 0x38]
+
+                        // Advance RSP past ValidateBeginEndQuery frame:
+                        pInfo->ContextRecord->Rsp += 0x40;
+
+                        // Look for EndQuery_VariadicHelper epilogue: mov rbx, [rsp+68h] (48 8B 5C 24 68)
+                        uint8_t* pRet = (uint8_t*)retAddr;
+                        bool found = false;
+                        for (int i = 0; i < 256; i++) {
+                            if (pRet[i] == 0x48 && pRet[i+1] == 0x8B && pRet[i+2] == 0x5C && pRet[i+3] == 0x24 && pRet[i+4] == 0x68) {
+                                pInfo->ContextRecord->Rip = (DWORD64)(pRet + i);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            pInfo->ContextRecord->Rip = (DWORD64)retAddr;
+                        }
                         return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }
