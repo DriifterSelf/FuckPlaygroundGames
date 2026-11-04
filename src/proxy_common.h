@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.11.0"
+#define PROXY_VERSION "3.12.0"
 
 enum component_status
 {
@@ -25,6 +25,7 @@ struct proxy_config
     int compute_offload;
     int hybrid_governor;
     int ecore_threshold_ms;
+    int fix_volumetric_rays;
 };
 
 struct proxy_telemetry
@@ -116,6 +117,7 @@ struct proxy_telemetry
     DWORD_PTR all_cores_mask;
 
     int st_overlay;
+    int volumetric_rays_fixed;
 };
 
 extern proxy_config g_cfg;
@@ -124,6 +126,7 @@ extern proxy_telemetry g_tel;
 void log_msg(const char* fmt, ...);
 void open_log_and_config();
 void identify_game();
+void sanitize_volumetric_pipeline();
 
 void vram_hook_install();
 void guard_install();

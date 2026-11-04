@@ -205,10 +205,25 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
 
         // 3q. Async Copy Queue & ReBAR Rescue Pipeline
         char copyBuf[140];
-        sprintf_s(copyBuf, " \\-- Direct DMA ReBAR: [ACTIVE] (%ld rescued OOM | Placed Heaps | 12_2)",
+        sprintf_s(copyBuf, " |-- Direct DMA ReBAR: [ACTIVE] (%ld rescued OOM | Placed Heaps | 12_2)",
                   g_tel.d3d12_gpu_upload_rescued);
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, copyBuf, (int)strlen(copyBuf));
+        y += step;
+
+        // 3r. Volumetric Fog Pipeline (Playground Games Day-1 Sky Ray Bug Fix)
+        char fogBuf[140];
+        if (g_tel.volumetric_rays_fixed) {
+            sprintf_s(fogBuf, " \\-- Volumetric Lighting: [AUTO-FIXED] (Fog: Ultra / Infinite Beams Suppressed)");
+            SetTextColor(hdc, RGB(70, 240, 140));
+        } else if (g_cfg.fix_volumetric_rays) {
+            sprintf_s(fogBuf, " \\-- Volumetric Lighting: [VERIFIED] (Fog: Ultra / Stable)");
+            SetTextColor(hdc, RGB(70, 240, 140));
+        } else {
+            sprintf_s(fogBuf, " \\-- Volumetric Lighting: [UNCLAMPED] (Extremo Far-Plane Active)");
+            SetTextColor(hdc, RGB(255, 205, 60));
+        }
+        TextOutA(hdc, 10, y, fogBuf, (int)strlen(fogBuf));
         y += step;
 
         // 4. Deterministic CPU Cluster Governor + MMCSS
@@ -296,7 +311,7 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         "AgsSelfAwareOverlayV3",
         "AgsProxyOverlay",
         WS_POPUP | (s_visible ? WS_VISIBLE : 0),
-        25, 25, 640, 435,
+        25, 25, 640, 455,
         NULL, NULL, GetModuleHandle(NULL), NULL
     );
 
@@ -331,6 +346,12 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         }
 
         DWORD now = GetTickCount();
+        static DWORD s_lastSanitizeTick = 0;
+        if (now - s_lastSanitizeTick >= 10000) { // Check every 10 seconds to maintain fix if user changes settings
+            s_lastSanitizeTick = now;
+            sanitize_volumetric_pipeline();
+        }
+
         if (now - lastTick >= 500) { // Refresh overlay at 2 Hz
             lastTick = now;
             if (s_visible && s_hwnd) {

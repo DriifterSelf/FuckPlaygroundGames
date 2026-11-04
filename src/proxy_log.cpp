@@ -60,6 +60,7 @@ void open_log_and_config()
     write_default(L"ComputeCullOffload", L"1");
     write_default(L"HybridCoreGovernor", L"1");
     write_default(L"ECoreThresholdMs", L"8");
+    write_default(L"FixVolumetricRays", L"1");
 
     g_cfg.overlay = GetPrivateProfileIntW(L"proxy", L"Overlay", 0, s_ini_path);
     g_cfg.overlay_key = GetPrivateProfileIntW(L"proxy", L"OverlayToggleKey", VK_F10, s_ini_path);
@@ -71,15 +72,22 @@ void open_log_and_config()
     g_cfg.hybrid_governor = GetPrivateProfileIntW(L"proxy", L"HybridCoreGovernor", 1, s_ini_path);
     g_cfg.ecore_threshold_ms = GetPrivateProfileIntW(L"proxy", L"ECoreThresholdMs", 8, s_ini_path);
     if (g_cfg.ecore_threshold_ms < 1) g_cfg.ecore_threshold_ms = 8;
+    g_cfg.fix_volumetric_rays = GetPrivateProfileIntW(L"proxy", L"FixVolumetricRays", 1, s_ini_path);
 
     if (g_cfg.vram_margin_percent < 1) g_cfg.vram_margin_percent = 1;
     if (g_cfg.vram_margin_percent > 50) g_cfg.vram_margin_percent = 50;
 
     log_msg("==============================================================");
     log_msg("[PROXY] AGS proxy v%s loaded (self-aware build)", PROXY_VERSION);
-    log_msg("[CONFIG] Overlay=%d Key=%d VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d ComputeOffload=%d HybridGov=%d ECoreThreshold=%dms",
+    log_msg("[CONFIG] Overlay=%d Key=%d VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d ComputeOffload=%d HybridGov=%d ECoreThreshold=%dms FixVolRays=%d",
             g_cfg.overlay, g_cfg.overlay_key, g_cfg.vram_uncap, g_cfg.vram_margin_percent,
-            g_cfg.oom_guard, g_cfg.oom_guard_max, g_cfg.compute_offload, g_cfg.hybrid_governor, g_cfg.ecore_threshold_ms);
+            g_cfg.oom_guard, g_cfg.oom_guard_max, g_cfg.compute_offload, g_cfg.hybrid_governor, g_cfg.ecore_threshold_ms,
+            g_cfg.fix_volumetric_rays);
+
+    if (g_cfg.fix_volumetric_rays)
+    {
+        sanitize_volumetric_pipeline();
+    }
 }
 
 void identify_game()
@@ -100,4 +108,101 @@ void identify_game()
     log_msg("[GAME] %s | PE timestamp=0x%08X | image size=%llu MB",
             g_tel.exe_name, g_tel.exe_timestamp,
             (unsigned long long)((g_tel.exe_end - g_tel.exe_base) / (1024 * 1024)));
+}
+
+void sanitize_volumetric_pipeline()
+{
+    if (!g_cfg.fix_volumetric_rays)
+    {
+        return;
+    }
+
+    wchar_t base[MAX_PATH];
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH))
+    {
+        return;
+    }
+
+    const wchar_t* candidates[] = {
+        L"\\ForzaHorizon6\\LocalStorage_Shared\\ForzaUserConfigSelections\\UserConfigSelections",
+        L"\\ForzaHorizon5\\LocalStorage_Shared\\ForzaUserConfigSelections\\UserConfigSelections",
+    };
+
+    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); ++i)
+    {
+        wchar_t config_path[MAX_PATH];
+        swprintf_s(config_path, L"%s%s", base, candidates[i]);
+
+        DWORD attr = GetFileAttributesW(config_path);
+        if (attr == INVALID_FILE_ATTRIBUTES)
+        {
+            continue;
+        }
+
+        HANDLE hFile = CreateFileW(
+            config_path,
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+        );
+
+        if (hFile == INVALID_HANDLE_VALUE)
+        {
+            continue;
+        }
+
+        DWORD fileSize = GetFileSize(hFile, NULL);
+        if (fileSize == INVALID_FILE_SIZE || fileSize == 0 || fileSize > 1024 * 1024)
+        {
+            CloseHandle(hFile);
+            continue;
+        }
+
+        char* buffer = (char*)malloc(fileSize + 1);
+        if (!buffer)
+        {
+            CloseHandle(hFile);
+            continue;
+        }
+
+        DWORD bytesRead = 0;
+        if (ReadFile(hFile, buffer, fileSize, &bytesRead, NULL) && bytesRead == fileSize)
+        {
+            buffer[fileSize] = '\0';
+
+            char* fogOpt = strstr(buffer, "id=\"VolumetricFogQuality\"");
+            if (fogOpt)
+            {
+                char* val4 = strstr(fogOpt, "value=\"4\"");
+                if (val4 && (val4 - fogOpt < 64))
+                {
+                    // Clamping Extremo (4) -> Ultra (3) to eliminate far-plane Froxel sky beams
+                    val4[7] = '3';
+
+                    SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
+                    DWORD bytesWritten = 0;
+                    if (WriteFile(hFile, buffer, fileSize, &bytesWritten, NULL))
+                    {
+                        FlushFileBuffers(hFile);
+                        g_tel.volumetric_rays_fixed = 1;
+                        log_msg("[LIGHTING] [AUTO-FIX] Day-1 ForzaTech Froxel bug neutralized: VolumetricFogQuality clamped 4 (Extremo) -> 3 (Ultra) in %ls", config_path);
+                    }
+                }
+                else
+                {
+                    char* val3 = strstr(fogOpt, "value=\"3\"");
+                    if (val3 && (val3 - fogOpt < 64))
+                    {
+                        g_tel.volumetric_rays_fixed = 1;
+                    }
+                }
+            }
+        }
+
+        free(buffer);
+        CloseHandle(hFile);
+    }
 }
