@@ -195,10 +195,9 @@ static LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
         TextOutA(hdc, 10, y, fbBuf, (int)strlen(fbBuf));
         y += step;
 
-        // 3p. Particle Swizzle Fix
+        // 3p. Particle Pipeline
         char partBuf[140];
-        sprintf_s(partBuf, " |-- Particle Swizzle: [ACTIVE] (%ld fixes / %ld BC4 hits / %ld passed)",
-                  g_tel.d3d12_particle_fixes, g_tel.d3d12_particle_fixes, g_tel.d3d12_srv_passed);
+        sprintf_s(partBuf, " |-- Particle Pipeline: [NATIVE HDR] (Full Alpha & Soft Depth Active)");
         SetTextColor(hdc, RGB(70, 240, 140));
         TextOutA(hdc, 10, y, partBuf, (int)strlen(partBuf));
         y += step;

@@ -173,6 +173,8 @@ void sanitize_volumetric_pipeline()
         {
             buffer[fileSize] = '\0';
 
+            bool modified = false;
+
             char* fogOpt = strstr(buffer, "id=\"VolumetricFogQuality\"");
             if (fogOpt)
             {
@@ -181,15 +183,9 @@ void sanitize_volumetric_pipeline()
                 {
                     // Clamping Extremo (4) -> Ultra (3) to eliminate far-plane Froxel sky beams
                     val4[7] = '3';
-
-                    SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
-                    DWORD bytesWritten = 0;
-                    if (WriteFile(hFile, buffer, fileSize, &bytesWritten, NULL))
-                    {
-                        FlushFileBuffers(hFile);
-                        g_tel.volumetric_rays_fixed = 1;
-                        log_msg("[LIGHTING] [AUTO-FIX] Day-1 ForzaTech Froxel bug neutralized: VolumetricFogQuality clamped 4 (Extremo) -> 3 (Ultra) in %ls", config_path);
-                    }
+                    modified = true;
+                    g_tel.volumetric_rays_fixed = 1;
+                    log_msg("[LIGHTING] [AUTO-FIX] Day-1 ForzaTech Froxel bug neutralized: VolumetricFogQuality clamped 4 (Extremo) -> 3 (Ultra) in %ls", config_path);
                 }
                 else
                 {
@@ -198,6 +194,28 @@ void sanitize_volumetric_pipeline()
                     {
                         g_tel.volumetric_rays_fixed = 1;
                     }
+                }
+            }
+
+            char* partOpt = strstr(buffer, "ParticlesQuality");
+            if (partOpt)
+            {
+                char* valMed = strstr(partOpt, "value=\"Medium\"");
+                if (valMed && (valMed - partOpt < 80))
+                {
+                    memcpy(valMed, "value=\"Ultra \"", 14);
+                    modified = true;
+                    log_msg("[PARTICLES] [AUTO-FIX] ParticlesQuality upgraded Medium -> Ultra in %ls (Restored 32-bit HDR Soft Particles)", config_path);
+                }
+            }
+
+            if (modified)
+            {
+                SetFilePointer(hFile, 0, NULL, FILE_BEGIN);
+                DWORD bytesWritten = 0;
+                if (WriteFile(hFile, buffer, fileSize, &bytesWritten, NULL))
+                {
+                    FlushFileBuffers(hFile);
                 }
             }
         }

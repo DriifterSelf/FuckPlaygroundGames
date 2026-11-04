@@ -244,8 +244,12 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_FORMAT_SUPPORT: {
-            // Feature 3: Full format support flags for compressed particle atlases, HDR buffers,
+            // Feature 3: Full telemetry monitoring for compressed particle atlases, HDR buffers,
             // Hi-Z depth downsampling pyramids, and Compute Skinning vertex buffers.
+            // CRITICAL FIX: Strictly preserve native AMD driver format support flags!
+            // Do NOT inject synthetic flags on D32_FLOAT or compressed formats,
+            // as forcing SHADER_SAMPLE on pure depth buffers breaks soft particle depth testing,
+            // and overriding format capabilities turns smooth particle puffs into flat rectangular PNG cutouts!
             D3D12_FEATURE_DATA_FORMAT_SUPPORT* fs = (D3D12_FEATURE_DATA_FORMAT_SUPPORT*)pFeatureSupportData;
 
             // Hi-Z Depth Buffer & Mip Pyramid Formats
@@ -281,39 +285,8 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 s_tl_batch.skinning_queries++;
             }
 
-            if (is_depth_hiz) {
-                // Strictly legitimate depth/stencil format support
-                // CRITICAL FIX: NEVER inject Texture3D or Typed UAV Stores to depth formats!
-                // Forcing UAV typed stores on D32_FLOAT corrupts shadow map depth comparison passes,
-                // causing point lights and headlights to lose occlusion and shoot unoccluded beams through geometry!
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL |
-                                 D3D12_FORMAT_SUPPORT1_TEXTURE2D |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE_COMPARISON |
-                                 D3D12_FORMAT_SUPPORT1_MIP |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
-            } else if (is_skinning_deform) {
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_BUFFER |
-                                 D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
-                fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
-            } else if (fs->Format == DXGI_FORMAT_R11G11B10_FLOAT || fs->Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-                       fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM || fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_TEXTURE2D |
-                                 D3D12_FORMAT_SUPPORT1_TEXTURE3D |
-                                 D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
-                                 D3D12_FORMAT_SUPPORT1_RENDER_TARGET |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
-                                 D3D12_FORMAT_SUPPORT1_MIP |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
-                fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
-            } else {
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_TEXTURE2D |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
-                                 D3D12_FORMAT_SUPPORT1_MIP |
-                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
-            }
             g_tel.d3d12_format_support = 1;
+            injected = false;
             break;
         }
         case D3D12_FEATURE_SHADER_MODEL: {
@@ -959,7 +932,10 @@ void dx12_hook_install(ID3D12Device* pDevice) {
 
     HookVtblEntry(&vtbl[8], (void*)Hook_CreateCommandQueue, (void**)&s_orig_ccq, "ID3D12Device::CreateCommandQueue (vtbl[8])");
     HookVtblEntry(&vtbl[13], (void*)Hook_CheckFeatureSupport, (void**)&s_orig_cfs, "ID3D12Device::CheckFeatureSupport (vtbl[13])");
-    HookVtblEntry(&vtbl[18], (void*)Hook_CreateShaderResourceView, (void**)&s_orig_csrv, "ID3D12Device::CreateShaderResourceView (vtbl[18])");
+    // NOTE: ID3D12Device::CreateShaderResourceView (vtbl[18]) is strictly UNHOOKED.
+    // Overriding Shader4ComponentMapping on BC4/BC5 textures destroyed sprite alpha channels,
+    // causing volumetric smoke and dust to render as opaque flat rectangular billboard "PNG" cutouts.
+    // Leaving native descriptor creation preserves full alpha transparency and gradient soft edges.
     HookVtblEntry(&vtbl[27], (void*)Hook_CreateCommittedResource, (void**)&s_orig_ccr, "ID3D12Device::CreateCommittedResource (vtbl[27])");
     HookVtblEntry(&vtbl[28], (void*)Hook_CreateHeap, (void**)&s_orig_ch, "ID3D12Device::CreateHeap (vtbl[28])");
     HookVtblEntry(&vtbl[29], (void*)Hook_CreatePlacedResource, (void**)&s_orig_cpr, "ID3D12Device::CreatePlacedResource (vtbl[29])");
