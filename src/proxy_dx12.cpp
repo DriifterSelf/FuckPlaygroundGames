@@ -215,18 +215,17 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         bool injected = true;
         switch (Feature) {
         case D3D12_FEATURE_D3D12_OPTIONS: {
-            // Feature 0: Bindless Rendering, Single-Pass Cubemaps, and Hardware ROVs
+            // Feature 0: Bindless Rendering & Single-Pass Cubemaps
             D3D12_FEATURE_DATA_D3D12_OPTIONS* opt = (D3D12_FEATURE_DATA_D3D12_OPTIONS*)pFeatureSupportData;
             opt->ResourceBindingTier = D3D12_RESOURCE_BINDING_TIER_3;
             opt->VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation = TRUE;
-            opt->ROVsSupported = TRUE;
+            // NOTE: Preserve driver native ROVsSupported (forcing ROVs causes order hazards in volumetric fog integration)
             opt->ResourceHeapTier = D3D12_RESOURCE_HEAP_TIER_2;
             g_tel.d3d12_bindless_tier3 = 1;
             g_tel.d3d12_single_pass_cubemaps = 1;
-            g_tel.d3d12_rovs_oit = 1;
             if (!(s_injected_logged_mask & (1ULL << 0))) {
                 s_injected_logged_mask |= (1ULL << 0);
-                log_msg("[DX12] [INJECT] Enabled Bindless Tier 3, Single-Pass Cubemaps, and Hardware ROVs (OIT)");
+                log_msg("[DX12] [INJECT] Enabled Bindless Tier 3 & Single-Pass Cubemaps (Preserved Native ROVs)");
             }
             break;
         }
@@ -282,29 +281,37 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
                 s_tl_batch.skinning_queries++;
             }
 
-            if (is_depth_hiz || is_skinning_deform ||
-                fs->Format == DXGI_FORMAT_BC4_UNORM || fs->Format == DXGI_FORMAT_BC4_SNORM ||
-                fs->Format == DXGI_FORMAT_BC4_TYPELESS ||
-                fs->Format == DXGI_FORMAT_BC5_UNORM || fs->Format == DXGI_FORMAT_BC5_SNORM ||
-                fs->Format == DXGI_FORMAT_BC5_TYPELESS ||
-                fs->Format == DXGI_FORMAT_BC6H_UF16 || fs->Format == DXGI_FORMAT_BC6H_SF16 ||
-                fs->Format == DXGI_FORMAT_BC7_UNORM || fs->Format == DXGI_FORMAT_BC7_UNORM_SRGB ||
-                fs->Format == DXGI_FORMAT_BC7_TYPELESS ||
-                fs->Format == DXGI_FORMAT_R8_UNORM || fs->Format == DXGI_FORMAT_R8_SNORM ||
-                fs->Format == DXGI_FORMAT_R8G8_UNORM || fs->Format == DXGI_FORMAT_R8G8_SNORM ||
-                fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM || fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-                fs->Format == DXGI_FORMAT_R11G11B10_FLOAT)
-            {
-                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_BUFFER |
-                                 D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER |
+            if (is_depth_hiz) {
+                // Strictly legitimate depth/stencil format support
+                // CRITICAL FIX: NEVER inject Texture3D or Typed UAV Stores to depth formats!
+                // Forcing UAV typed stores on D32_FLOAT corrupts shadow map depth comparison passes,
+                // causing point lights and headlights to lose occlusion and shoot unoccluded beams through geometry!
+                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL |
                                  D3D12_FORMAT_SUPPORT1_TEXTURE2D |
-                                 D3D12_FORMAT_SUPPORT1_TEXTURE3D |
-                                 D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
                                  D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
                                  D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE_COMPARISON |
                                  D3D12_FORMAT_SUPPORT1_MIP |
                                  D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
+            } else if (is_skinning_deform) {
+                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_BUFFER |
+                                 D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER |
+                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
                 fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+            } else if (fs->Format == DXGI_FORMAT_R11G11B10_FLOAT || fs->Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+                       fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM || fs->Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
+                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                                 D3D12_FORMAT_SUPPORT1_TEXTURE3D |
+                                 D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
+                                 D3D12_FORMAT_SUPPORT1_RENDER_TARGET |
+                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
+                                 D3D12_FORMAT_SUPPORT1_MIP |
+                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
+                fs->Support2 |= (D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+            } else {
+                fs->Support1 |= (D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                                 D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE |
+                                 D3D12_FORMAT_SUPPORT1_MIP |
+                                 D3D12_FORMAT_SUPPORT1_SHADER_LOAD);
             }
             g_tel.d3d12_format_support = 1;
             break;
@@ -403,13 +410,13 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS4: {
-            // Feature 23: Native 16-bit Float and Int operations (2x math rate on RDNA4 Compute Units)
-            D3D12_FEATURE_DATA_D3D12_OPTIONS4* opt4 = (D3D12_FEATURE_DATA_D3D12_OPTIONS4*)pFeatureSupportData;
-            opt4->Native16BitShaderOpsSupported = TRUE;
-            if (!(s_injected_logged_mask & (1ULL << 23))) {
-                s_injected_logged_mask |= (1ULL << 23);
-                log_msg("[DX12] [INJECT] Enabled Native 16-bit Float/Int Shader Ops (2x Math Rate on RDNA4)");
-            }
+            // Feature 23: Native 16-bit Float and Int operations
+            // CRITICAL FIX: Do NOT force Native16BitShaderOpsSupported = TRUE!
+            // When FP16 is forced, volumetric fog (Froxel grid) raymarching accumulation overflows
+            // past the 65,504 FP16 maximum value, causing intermediate radiance to hit +INF,
+            // which manifests as giant, infinite cylindrical light beams shooting into the sky from distant streetlights!
+            // Keeping native 32-bit float accumulation completely eliminates the overflow and the laser beams!
+            injected = false;
             break;
         }
         case D3D12_FEATURE_SERIALIZATION: {
