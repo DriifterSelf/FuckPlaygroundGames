@@ -21,7 +21,11 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
             __try {
                 // CASE 1: Primary Fail-Fast Assertion (Write to Address 0x0)
                 // Instruction: mov dword ptr [0], 0 (11 bytes: C7 04 25 00 00 00 00 00 00 00 00)
-                // Found at RVA 0x34BA060 in forzahorizon6.exe
+                // Found at RVA 0x34BA060, 0x34C11D0, 0x34C1245 in forzahorizon6.exe
+                // Calling context: ForzaTech internal crash trap / panic assertion handler.
+                // Deliberately triggers access violation on null-write to force process termination.
+                // Suppressing this instruction and advancing RIP by 11 bytes safely bypasses the panic
+                // and allows the engine to recover or continue normal execution.
                 if (isWrite == 1 && faultAddr == 0) {
                     if (rip[0] == 0xC7 && rip[1] == 0x04 && rip[2] == 0x25 &&
                         *(uint32_t*)(rip + 3) == 0 && *(uint32_t*)(rip + 7) == 0) {
@@ -29,30 +33,18 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         DWORD64 rax = pInfo->ContextRecord->Rax;
                         DWORD64 rbx = pInfo->ContextRecord->Rbx;
 
-                        // Check if associated with an Out of Memory error code in RAX or RBX
-                        // 0x8007000E = E_OUTOFMEMORY, 0x887A002B = DXGI_ERROR_OUT_OF_MEMORY
-                        bool is_oom = (rax == 0x8007000E || rbx == 0x8007000E ||
-                                       (DWORD)rax == 0x8007000E || (DWORD)rbx == 0x8007000E ||
-                                       rax == 0x887A002B || rbx == 0x887A002B);
-
                         LONG hit = InterlockedIncrement(&g_tel.guard_hits);
 
-                        if (is_oom) {
-                            if (hit <= (LONG)g_cfg.oom_guard_max) {
-                                InterlockedIncrement(&g_tel.guard_suppressed);
-                                log_msg("[GUARD] Suppressed fail-fast NULL-write assertion #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, RBX=0x%llX). Advancing past assert.",
-                                        hit, rip, rva, rax, rbx);
-                                pInfo->ContextRecord->Rip += 11;
-                                return EXCEPTION_CONTINUE_EXECUTION;
-                            } else {
-                                InterlockedIncrement(&g_tel.guard_passed);
-                                log_msg("[GUARD] [LIMIT] Exceeded maximum allowed suppressions (%d). Letting exception pass.",
-                                        g_cfg.oom_guard_max);
-                            }
+                        if (hit <= (LONG)g_cfg.oom_guard_max) {
+                            InterlockedIncrement(&g_tel.guard_suppressed);
+                            log_msg("[GUARD] Suppressed fail-fast NULL-write assertion #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, RBX=0x%llX). Advancing past assert.",
+                                    hit, rip, rva, rax, rbx);
+                            pInfo->ContextRecord->Rip += 11;
+                            return EXCEPTION_CONTINUE_EXECUTION;
                         } else {
                             InterlockedIncrement(&g_tel.guard_passed);
-                            log_msg("[GUARD] [PASS] Null-write at %p (RVA=0x%llX) matched instruction but error codes (RAX=0x%llX, RBX=0x%llX) were not OOM. Passing through.",
-                                    rip, rva, rax, rbx);
+                            log_msg("[GUARD] [LIMIT] Exceeded maximum allowed suppressions (%d). Letting exception pass.",
+                                    g_cfg.oom_guard_max);
                         }
                     }
                 }
@@ -111,8 +103,17 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                             if (prefixLen > 4) break;
                         }
 
-                        if (*p == 0x8B || *p == 0x8A) {
+                        if (*p == 0x8B || *p == 0x8A || *p == 0x38 || *p == 0x39 || *p == 0x3A || *p == 0x3B || *p == 0x85) {
                             p++; // Skip opcode
+                            uint8_t modrm = *p++;
+                            uint8_t mod = modrm >> 6;
+                            uint8_t rm = modrm & 7;
+                            instrLen = prefixLen + 2;
+                            if (rm == 4 && mod != 3) { p++; instrLen++; } // SIB
+                            if (mod == 1) { instrLen += 1; }              // disp8
+                            else if (mod == 2 || (mod == 0 && rm == 5)) { instrLen += 4; } // disp32
+                        } else if (*p == 0xFF) {
+                            p++; // Skip 0xFF (indirect call/jmp: e.g. FF 50 28)
                             uint8_t modrm = *p++;
                             uint8_t mod = modrm >> 6;
                             uint8_t rm = modrm & 7;

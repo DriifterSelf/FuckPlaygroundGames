@@ -67,7 +67,7 @@ void open_log_and_config()
     g_cfg.vram_uncap = GetPrivateProfileIntW(L"proxy", L"VramUncap", 1, s_ini_path);
     g_cfg.vram_margin_percent = GetPrivateProfileIntW(L"proxy", L"VramMarginPercent", 8, s_ini_path);
     g_cfg.oom_guard = GetPrivateProfileIntW(L"proxy", L"OomGuard", 1, s_ini_path);
-    g_cfg.oom_guard_max = GetPrivateProfileIntW(L"proxy", L"OomGuardMaxSuppress", 20, s_ini_path);
+    g_cfg.oom_guard_max = GetPrivateProfileIntW(L"proxy", L"OomGuardMaxSuppress", 100, s_ini_path);
     g_cfg.compute_offload = GetPrivateProfileIntW(L"proxy", L"ComputeCullOffload", 1, s_ini_path);
     g_cfg.hybrid_governor = GetPrivateProfileIntW(L"proxy", L"HybridCoreGovernor", 1, s_ini_path);
     g_cfg.ecore_threshold_ms = GetPrivateProfileIntW(L"proxy", L"ECoreThresholdMs", 8, s_ini_path);
