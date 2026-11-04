@@ -415,11 +415,12 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         }
         case D3D12_FEATURE_D3D12_OPTIONS5: {
             // Feature 27: Force Raytracing Tier 1.1 support for Inline Raytracing (RayQuery in Compute Shaders)
+            // CRITICAL FIX: Strictly preserve native RenderPassesTier! Overriding to TIER_1 causes render pass target discards
+            // on particle composition buffers, breaking FSR 4.1.2 transparency blending!
             D3D12_FEATURE_DATA_D3D12_OPTIONS5* opt5 = (D3D12_FEATURE_DATA_D3D12_OPTIONS5*)pFeatureSupportData;
             if (opt5->RaytracingTier < D3D12_RAYTRACING_TIER_1_1) {
                 opt5->RaytracingTier = D3D12_RAYTRACING_TIER_1_1;
             }
-            opt5->RenderPassesTier = D3D12_RENDER_PASS_TIER_1;
             g_tel.d3d12_rayquery = 1;
             if (!(s_injected_logged_mask & (1ULL << 27))) {
                 s_injected_logged_mask |= (1ULL << 27);
@@ -490,24 +491,19 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS12: {
-            // Feature 41: Enhanced Barriers (Direct hardware layout transitions without CPU tracking)
-            D3D12_FEATURE_DATA_D3D12_OPTIONS12* opt12 = (D3D12_FEATURE_DATA_D3D12_OPTIONS12*)pFeatureSupportData;
-            opt12->EnhancedBarriersSupported = TRUE;
-            opt12->RelaxedFormatCastingSupported = TRUE;
-            g_tel.d3d12_enhanced_barriers = 1;
-            if (!(s_injected_logged_mask & (1ULL << 41))) {
-                s_injected_logged_mask |= (1ULL << 41);
-                log_msg("[DX12] [INJECT] Enabled Enhanced Barriers (Zero CPU Barrier Tracking)");
-            }
+            // Feature 41: CRITICAL FIX: Strictly preserve native driver Barrier tracking and Format Casting!
+            // Overriding EnhancedBarriersSupported and RelaxedFormatCasting forces mismatched resource barrier transitions,
+            // corrupting particle render targets and turning smoke/dust into toxic green/neon artifacts in FSR 4.1.2!
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS13: {
-            // Feature 42: Unrestricted Vertex & Buffer Alignment (Zero CPU Re-packing)
+            // Feature 42: Unrestricted Vertex & Buffer Alignment
+            // CRITICAL FIX: Strictly preserve native AlphaBlendFactorSupported to prevent dual-source particle blend corruption!
             D3D12_FEATURE_DATA_D3D12_OPTIONS13* opt13 = (D3D12_FEATURE_DATA_D3D12_OPTIONS13*)pFeatureSupportData;
             opt13->UnrestrictedBufferTextureCopyPitchSupported = TRUE;
             opt13->UnrestrictedVertexElementAlignmentSupported = TRUE;
             opt13->TextureCopyBetweenDimensionsSupported = TRUE;
-            opt13->AlphaBlendFactorSupported = TRUE;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS14: {
@@ -544,9 +540,9 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS18: {
-            // Feature 47: Render Passes Valid
-            D3D12_FEATURE_DATA_D3D12_OPTIONS18* opt18 = (D3D12_FEATURE_DATA_D3D12_OPTIONS18*)pFeatureSupportData;
-            opt18->RenderPassesValid = TRUE;
+            // Feature 47: CRITICAL FIX: Strictly preserve native RenderPassesValid!
+            // Forcing RenderPassesValid causes transparent particles to be drawn inside unpreserved render pass scopes!
+            injected = false;
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS19: {
@@ -932,7 +928,10 @@ void dx12_hook_install(ID3D12Device* pDevice) {
 
     HookVtblEntry(&vtbl[8], (void*)Hook_CreateCommandQueue, (void**)&s_orig_ccq, "ID3D12Device::CreateCommandQueue (vtbl[8])");
     HookVtblEntry(&vtbl[13], (void*)Hook_CheckFeatureSupport, (void**)&s_orig_cfs, "ID3D12Device::CheckFeatureSupport (vtbl[13])");
-    HookVtblEntry(&vtbl[18], (void*)Hook_CreateShaderResourceView, (void**)&s_orig_csrv, "ID3D12Device::CreateShaderResourceView (vtbl[18])");
+    // NOTE: ID3D12Device::CreateShaderResourceView (vtbl[18]) is strictly UNHOOKED.
+    // Forcing component swizzling on BC4 textures corrupts the FSR 4.1.2 Reactive Mask,
+    // which causes FSR's neural upscaler to bypass temporal filtering and treat particle quads as raw flat "PNG" billboards!
+    // Leaving native descriptor creation allows FSR 4.1.2 to smoothly reconstruct soft transparency edges.
     HookVtblEntry(&vtbl[27], (void*)Hook_CreateCommittedResource, (void**)&s_orig_ccr, "ID3D12Device::CreateCommittedResource (vtbl[27])");
     HookVtblEntry(&vtbl[28], (void*)Hook_CreateHeap, (void**)&s_orig_ch, "ID3D12Device::CreateHeap (vtbl[28])");
     HookVtblEntry(&vtbl[29], (void*)Hook_CreatePlacedResource, (void**)&s_orig_cpr, "ID3D12Device::CreatePlacedResource (vtbl[29])");
