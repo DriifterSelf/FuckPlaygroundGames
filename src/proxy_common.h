@@ -26,6 +26,7 @@ struct proxy_config
     int hybrid_governor;
     int ecore_threshold_ms;
     int fix_volumetric_rays;
+    int disable_vrs;
 };
 
 struct proxy_telemetry

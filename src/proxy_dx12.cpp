@@ -429,11 +429,24 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS6: {
-            // Feature 30: Variable Rate Shading Tier 2 & Background Processing
+            // Feature 30: Variable Rate Shading & Background Processing
             D3D12_FEATURE_DATA_D3D12_OPTIONS6* opt6 = (D3D12_FEATURE_DATA_D3D12_OPTIONS6*)pFeatureSupportData;
-            opt6->AdditionalShadingRatesSupported = TRUE;
-            opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = TRUE;
-            opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
+            if (g_cfg.disable_vrs) {
+                // Strictly DISABLE Variable Rate Shading (VRS)
+                // Prevents ForzaTech from coarsening particle shading into 2x2/4x4 pixelated chunks,
+                // restoring full-rate 1x1 per-pixel native shading on rain, spray, and smoke!
+                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED;
+                opt6->AdditionalShadingRatesSupported = FALSE;
+                opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = FALSE;
+                if (!(s_injected_logged_mask & (1ULL << 30))) {
+                    s_injected_logged_mask |= (1ULL << 30);
+                    log_msg("[DX12] [OPT] Variable Rate Shading (VRS) DISABLED -> Full-Rate 1x1 Native Shading on Particles & Rain.");
+                }
+            } else {
+                opt6->AdditionalShadingRatesSupported = TRUE;
+                opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = TRUE;
+                opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_2;
+            }
             opt6->BackgroundProcessingSupported = TRUE;
             break;
         }
@@ -480,8 +493,13 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
         case D3D12_FEATURE_D3D12_OPTIONS10: {
             // Feature 39: Mesh Shader Shading Rate & Combiner for GPU Deformation & Skinning
             D3D12_FEATURE_DATA_D3D12_OPTIONS10* opt10 = (D3D12_FEATURE_DATA_D3D12_OPTIONS10*)pFeatureSupportData;
-            opt10->VariableRateShadingSumCombinerSupported = TRUE;
-            opt10->MeshShaderPerPrimitiveShadingRateSupported = TRUE;
+            if (g_cfg.disable_vrs) {
+                opt10->VariableRateShadingSumCombinerSupported = FALSE;
+                opt10->MeshShaderPerPrimitiveShadingRateSupported = FALSE;
+            } else {
+                opt10->VariableRateShadingSumCombinerSupported = TRUE;
+                opt10->MeshShaderPerPrimitiveShadingRateSupported = TRUE;
+            }
             break;
         }
         case D3D12_FEATURE_D3D12_OPTIONS11: {

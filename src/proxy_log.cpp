@@ -61,6 +61,7 @@ void open_log_and_config()
     write_default(L"HybridCoreGovernor", L"1");
     write_default(L"ECoreThresholdMs", L"8");
     write_default(L"FixVolumetricRays", L"1");
+    write_default(L"DisableVRS", L"1");
 
     g_cfg.overlay = GetPrivateProfileIntW(L"proxy", L"Overlay", 0, s_ini_path);
     g_cfg.overlay_key = GetPrivateProfileIntW(L"proxy", L"OverlayToggleKey", VK_F10, s_ini_path);
@@ -73,16 +74,17 @@ void open_log_and_config()
     g_cfg.ecore_threshold_ms = GetPrivateProfileIntW(L"proxy", L"ECoreThresholdMs", 8, s_ini_path);
     if (g_cfg.ecore_threshold_ms < 1) g_cfg.ecore_threshold_ms = 8;
     g_cfg.fix_volumetric_rays = GetPrivateProfileIntW(L"proxy", L"FixVolumetricRays", 1, s_ini_path);
+    g_cfg.disable_vrs = GetPrivateProfileIntW(L"proxy", L"DisableVRS", 1, s_ini_path);
 
     if (g_cfg.vram_margin_percent < 1) g_cfg.vram_margin_percent = 1;
     if (g_cfg.vram_margin_percent > 50) g_cfg.vram_margin_percent = 50;
 
     log_msg("==============================================================");
     log_msg("[PROXY] AGS proxy v%s loaded (self-aware build)", PROXY_VERSION);
-    log_msg("[CONFIG] Overlay=%d Key=%d VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d ComputeOffload=%d HybridGov=%d ECoreThreshold=%dms FixVolRays=%d",
+    log_msg("[CONFIG] Overlay=%d Key=%d VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d ComputeOffload=%d HybridGov=%d ECoreThreshold=%dms FixVolRays=%d DisableVRS=%d",
             g_cfg.overlay, g_cfg.overlay_key, g_cfg.vram_uncap, g_cfg.vram_margin_percent,
             g_cfg.oom_guard, g_cfg.oom_guard_max, g_cfg.compute_offload, g_cfg.hybrid_governor, g_cfg.ecore_threshold_ms,
-            g_cfg.fix_volumetric_rays);
+            g_cfg.fix_volumetric_rays, g_cfg.disable_vrs);
 
     if (g_cfg.fix_volumetric_rays)
     {
