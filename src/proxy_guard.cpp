@@ -95,8 +95,19 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                             }
                         }
 
-                        // Jump directly to function epilogue at 0xFED06A (rip + 0x9D)
-                        pInfo->ContextRecord->Rip = (DWORD64)(rip + 0x9D);
+                        // Look forward dynamically for relative jmp (0xE9) to epilogue
+                        bool jmpFound = false;
+                        for (int i = 4; i <= 32; i++) {
+                            if (rip[i] == 0xE9) {
+                                int32_t relOffset = *(int32_t*)(rip + i + 1);
+                                pInfo->ContextRecord->Rip = (DWORD64)(rip + i + 5 + relOffset);
+                                jmpFound = true;
+                                break;
+                            }
+                        }
+                        if (!jmpFound) {
+                            pInfo->ContextRecord->Rip = (DWORD64)(rip + 0x9D);
+                        }
                         return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }

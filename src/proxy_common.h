@@ -1,9 +1,9 @@
-// Shared state for the AGS proxy (self-aware build)
+// Shared state for the AGS proxy (Fixes-Only Clean Build)
 #pragma once
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.12.0"
+#define PROXY_VERSION "3.13.0"
 
 enum component_status
 {
@@ -16,16 +16,11 @@ enum component_status
 
 struct proxy_config
 {
-    int overlay;
-    int overlay_key;
     int vram_uncap;
     int vram_margin_percent;
     int oom_guard;
     int oom_guard_max;
-    int compute_offload;
     int hybrid_governor;
-    int ecore_threshold_ms;
-    int fix_volumetric_rays;
 };
 
 struct proxy_telemetry
@@ -51,46 +46,6 @@ struct proxy_telemetry
     int st_dx12;
     int dx12_result;
     uint32_t ext_bits;
-    int ags_mdi_unlocked;
-
-    // Direct3D 12 Compute & Feature Accelerators
-    volatile LONG d3d12_feature_queries;
-    volatile LONG d3d12_cfs_injected;
-    volatile LONG d3d12_cfs_passed;
-    int d3d12_wave_ops;
-    int d3d12_mesh_shader;
-    int d3d12_rayquery;
-    int d3d12_async_copy;
-    int d3d12_bindless_tier3;
-    int d3d12_single_pass_cubemaps;
-    int d3d12_rovs_oit;
-    int d3d12_depth_bounds;
-    int d3d12_enhanced_barriers;
-    int d3d12_gpu_atomics64;
-    volatile LONG d3d12_particle_fixes;
-    volatile LONG d3d12_srv_total;
-    volatile LONG d3d12_srv_passed;
-    int d3d12_execute_indirect_1_1;
-    int d3d12_work_graphs;
-    int d3d12_sampler_feedback;
-    int d3d12_gpu_upload_heap;
-    int d3d12_predication;
-    int d3d12_format_support;
-    int d3d12_audio_compute;
-    volatile LONG d3d12_audio_queries;
-    int d3d12_hiz_culling;
-    volatile LONG d3d12_hiz_queries;
-    int d3d12_compute_skinning;
-    volatile LONG d3d12_skinning_queries;
-    int d3d12_placed_resources;
-    volatile LONG d3d12_gpu_upload_rescued;
-    volatile LONG d3d12_committed_resources_created;
-    volatile LONG d3d12_heaps_created;
-    int d3d12_displayable;
-    int d3d12_isolated_mmu;
-    volatile LONG d3d12_compute_queues_elevated;
-    volatile LONG d3d12_copy_queues_elevated;
-    int mmcss_active;
 
     int st_vram;
     char vram_err[96];
@@ -115,9 +70,7 @@ struct proxy_telemetry
     DWORD_PTR p_core_mask;
     DWORD_PTR e_core_mask;
     DWORD_PTR all_cores_mask;
-
-    int st_overlay;
-    int volumetric_rays_fixed;
+    int mmcss_active;
 };
 
 extern proxy_config g_cfg;
@@ -126,10 +79,10 @@ extern proxy_telemetry g_tel;
 void log_msg(const char* fmt, ...);
 void open_log_and_config();
 void identify_game();
+void sanitize_particle_config();
 
 void vram_hook_install();
 void guard_install();
-void overlay_start();
-struct ID3D12Device;
-void dx12_hook_install(struct ID3D12Device* pDevice);
 void sched_governor_start();
+struct ID3D12Device;
+void particles_hook_install(struct ID3D12Device* pDevice);

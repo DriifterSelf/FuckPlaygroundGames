@@ -1,4 +1,4 @@
-// AMD AGS Proxy - Main Entry Point & Forwarder
+// AMD AGS Proxy - Main Entry Point & Forwarder (Fixes-Only Clean Build)
 #include <stdio.h>
 #include <stdint.h>
 #include "proxy_common.h"
@@ -64,7 +64,6 @@ static void InspectAGSGPUInfo(void* gpuInfo) {
         g_tel.num_rops = *pNumROPs;
         g_tel.ags_local_mem = *pLocalMemoryBytes;
 
-        // If WGP is 0 but CUs exist, compute WGPs dynamically (standard RDNA = 2 CUs per WGP)
         if (*pNumWGPs <= 0 && *pNumCUs > 0) {
             *pNumWGPs = *pNumCUs / 2;
             g_tel.num_wgps = *pNumWGPs;
@@ -83,7 +82,7 @@ extern "C" __declspec(dllexport) int agsInitialize(int agsVersion, const void* c
         return 1;
     }
 
-    // Ensure VRAM hook is installed when game initializes AGS (outside of loader lock)
+    // Ensure VRAM hook is installed when game initializes AGS
     vram_hook_install();
 
     log_msg("[AGS] agsInitialize called (agsVersion=0x%X)", agsVersion);
@@ -129,15 +128,20 @@ extern "C" __declspec(dllexport) int agsDriverExtensionsDX12_CreateDevice(
     if (res == 0 && returnedParams != NULL) {
         ID3D12Device* pDevice = *(ID3D12Device**)returnedParams;
         if (pDevice) {
-            dx12_hook_install(pDevice);
+            particles_hook_install(pDevice);
         }
         uint32_t* pExt = (uint32_t*)((uint8_t*)returnedParams + sizeof(void*));
         g_tel.ext_bits = *pExt;
-        log_msg("[AGS] Native AMD Driver Extensions: 0x%08X (Preserved 100%% Genuine Driver Capabilities - Zero UAV/Intrinsics Hijacking)", g_tel.ext_bits);
+        log_msg("[AGS] Native AMD Driver Extensions: 0x%08X (Particle Swizzle Fix Active)", g_tel.ext_bits);
     } else {
         log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice failed with code %d", res);
     }
     return res;
+}
+
+static DWORD WINAPI EarlyVramHookWorker(LPVOID) {
+    vram_hook_install();
+    return 0;
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
@@ -146,11 +150,15 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 
         open_log_and_config();
         identify_game();
+        sanitize_particle_config();
         guard_install();
         sched_governor_start();
-        overlay_start();
 
-        // VRAM hook is initialized when overlay thread starts or when agsInitialize is called.
+        // Install VRAM hook asynchronously outside loader lock
+        HANDLE hWorker = CreateThread(NULL, 0, EarlyVramHookWorker, NULL, 0, NULL);
+        if (hWorker) {
+            CloseHandle(hWorker);
+        }
     } else if (reason == DLL_PROCESS_DETACH) {
         log_msg("[PROXY] Proxy detaching from process.");
     }

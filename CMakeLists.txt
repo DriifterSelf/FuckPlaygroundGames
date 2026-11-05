@@ -9,9 +9,8 @@ add_library(amd_ags_x64 SHARED
     src/proxy_log.cpp
     src/proxy_vram.cpp
     src/proxy_guard.cpp
-    src/proxy_dx12.cpp
+    src/proxy_particles.cpp
     src/proxy_sched.cpp
-    src/proxy_overlay.cpp
 )
 
 target_include_directories(amd_ags_x64 PRIVATE src)
@@ -19,7 +18,6 @@ target_include_directories(amd_ags_x64 PRIVATE src)
 target_link_libraries(amd_ags_x64 PRIVATE
     dxgi
     user32
-    gdi32
 )
 
 set_target_properties(amd_ags_x64 PROPERTIES
