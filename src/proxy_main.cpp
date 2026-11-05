@@ -132,12 +132,8 @@ extern "C" __declspec(dllexport) int agsDriverExtensionsDX12_CreateDevice(
             dx12_hook_install(pDevice);
         }
         uint32_t* pExt = (uint32_t*)((uint8_t*)returnedParams + sizeof(void*));
-        // Safely unlock MultiDrawIndirect (bit 5), userMarkers (bit 2), appRegistration (bit 3), and UAVBindSlot (bit 4)
-        // while strictly preserving driver defaults for experimental ray hit tokens and vendor intrinsics
-        *pExt |= (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5);
         g_tel.ext_bits = *pExt;
-        g_tel.ags_mdi_unlocked = 1;
-        log_msg("[AGS] Safely Unlocked AMD Driver Extensions: 0x%08X (MultiDrawIndirect Unlocked, Lighting-Safe)", g_tel.ext_bits);
+        log_msg("[AGS] Native AMD Driver Extensions: 0x%08X (Preserved 100%% Genuine Driver Capabilities - Zero UAV/Intrinsics Hijacking)", g_tel.ext_bits);
     } else {
         log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice failed with code %d", res);
     }

@@ -65,7 +65,6 @@ static HRESULT STDMETHODCALLTYPE Hook_CheckFeatureSupport(
             opt6->VariableShadingRateTier = D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED;
             opt6->AdditionalShadingRatesSupported = FALSE;
             opt6->PerPrimitiveShadingRateSupportedWithViewportIndexing = FALSE;
-            opt6->BackgroundProcessingSupported = TRUE;
             injected = true;
             if (!(s_injected_logged_mask & (1ULL << 30))) {
                 s_injected_logged_mask |= (1ULL << 30);

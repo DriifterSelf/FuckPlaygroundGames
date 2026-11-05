@@ -126,7 +126,6 @@ extern proxy_telemetry g_tel;
 void log_msg(const char* fmt, ...);
 void open_log_and_config();
 void identify_game();
-void sanitize_volumetric_pipeline();
 
 void vram_hook_install();
 void guard_install();

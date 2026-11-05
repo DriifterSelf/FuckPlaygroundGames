@@ -345,12 +345,6 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         }
 
         DWORD now = GetTickCount();
-        static DWORD s_lastSanitizeTick = 0;
-        if (now - s_lastSanitizeTick >= 10000) { // Check every 10 seconds to maintain fix if user changes settings
-            s_lastSanitizeTick = now;
-            sanitize_volumetric_pipeline();
-        }
-
         if (now - lastTick >= 500) { // Refresh overlay at 2 Hz
             lastTick = now;
             if (s_visible && s_hwnd) {
