@@ -56,21 +56,23 @@ void open_log_and_config()
     write_default(L"OomGuard", L"1");
     write_default(L"OomGuardMaxSuppress", L"50");
     write_default(L"HybridCoreGovernor", L"1");
+    write_default(L"ParticleFix", L"1");
 
     g_cfg.vram_uncap = GetPrivateProfileIntW(L"proxy", L"VramUncap", 1, s_ini_path);
     g_cfg.vram_margin_percent = GetPrivateProfileIntW(L"proxy", L"VramMarginPercent", 8, s_ini_path);
     g_cfg.oom_guard = GetPrivateProfileIntW(L"proxy", L"OomGuard", 1, s_ini_path);
     g_cfg.oom_guard_max = GetPrivateProfileIntW(L"proxy", L"OomGuardMaxSuppress", 50, s_ini_path);
     g_cfg.hybrid_governor = GetPrivateProfileIntW(L"proxy", L"HybridCoreGovernor", 1, s_ini_path);
+    g_cfg.particle_fix = GetPrivateProfileIntW(L"proxy", L"ParticleFix", 1, s_ini_path);
 
     if (g_cfg.vram_margin_percent < 1) g_cfg.vram_margin_percent = 1;
     if (g_cfg.vram_margin_percent > 50) g_cfg.vram_margin_percent = 50;
 
     log_msg("==============================================================");
     log_msg("[PROXY] AGS proxy v%s loaded (Fixes-Only Clean Build)", PROXY_VERSION);
-    log_msg("[CONFIG] VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d HybridGov=%d",
+    log_msg("[CONFIG] VramUncap=%d Margin=%d%% OomGuard=%d MaxSuppress=%d HybridGov=%d ParticleFix=%d",
             g_cfg.vram_uncap, g_cfg.vram_margin_percent,
-            g_cfg.oom_guard, g_cfg.oom_guard_max, g_cfg.hybrid_governor);
+            g_cfg.oom_guard, g_cfg.oom_guard_max, g_cfg.hybrid_governor, g_cfg.particle_fix);
 }
 
 void identify_game()

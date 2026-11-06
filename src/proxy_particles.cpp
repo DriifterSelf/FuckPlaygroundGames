@@ -1,6 +1,7 @@
 // Direct3D 12 Particle SRV Swizzle Hook
-// Eliminates neon red, yellow, and magenta color corruption on single-channel BC4/R8/R16 textures
-// Restores soft depth particle fading by providing unified monochromatic luminance & alpha
+// Eliminates neon red, yellow, and magenta color corruption on single-channel BC4 textures
+// Restores soft depth particle fading by providing neutral white luminance (1,1,1) & alpha (R)
+// Eliminates "cubos magenta", "png de burbujas", and "manchas negras"
 #include <d3d12.h>
 #include <stdio.h>
 #include "proxy_common.h"
@@ -13,18 +14,11 @@ typedef void (STDMETHODCALLTYPE *PFN_CreateShaderResourceView)(
 );
 
 static PFN_CreateShaderResourceView s_orig_csrv = NULL;
+static LONG s_particle_fixes_applied = 0;
 
-static inline bool IsSingleChannelFormat(DXGI_FORMAT fmt) {
+static inline bool IsBC4ParticleFormat(DXGI_FORMAT fmt) {
     return (fmt == DXGI_FORMAT_BC4_UNORM ||
-            fmt == DXGI_FORMAT_BC4_SNORM ||
-            fmt == DXGI_FORMAT_BC4_TYPELESS ||
-            fmt == DXGI_FORMAT_R8_UNORM ||
-            fmt == DXGI_FORMAT_R8_SNORM ||
-            fmt == DXGI_FORMAT_R8_TYPELESS ||
-            fmt == DXGI_FORMAT_R16_UNORM ||
-            fmt == DXGI_FORMAT_R16_SNORM ||
-            fmt == DXGI_FORMAT_R16_FLOAT ||
-            fmt == DXGI_FORMAT_R16_TYPELESS);
+            fmt == DXGI_FORMAT_BC4_SNORM);
 }
 
 static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
@@ -33,44 +27,55 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
     const D3D12_SHADER_RESOURCE_VIEW_DESC* pDesc,
     D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor
 ) {
-    if (pDesc) {
-        if (IsSingleChannelFormat(pDesc->Format) &&
+    if (g_cfg.particle_fix != 0 && pDesc && pResource) {
+        if (IsBC4ParticleFormat(pDesc->Format) &&
             pDesc->Shader4ComponentMapping == D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING)
         {
-            D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
-            // Map (0, 0, 0, 0): R -> R, G -> R, B -> R, A -> R
-            // Guarantees R == G == B, completely neutralizing magenta (R=1, G=0, B=1) and neon red (R=1, G=0, B=0)
-            // Sets Alpha = R, eliminating hard cube boundaries and restoring soft alpha fade
-            desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-            s_orig_csrv(This, pResource, &desc_copy, DestDescriptor);
-            return;
-        }
-    } else if (pResource) {
-        D3D12_RESOURCE_DESC rdesc = pResource->GetDesc();
-        if (IsSingleChannelFormat(rdesc.Format)) {
-            D3D12_SHADER_RESOURCE_VIEW_DESC local_desc = {};
-            local_desc.Format = rdesc.Format;
-            local_desc.ViewDimension = (rdesc.DepthOrArraySize > 1) ? D3D12_SRV_DIMENSION_TEXTURE2DARRAY : D3D12_SRV_DIMENSION_TEXTURE2D;
-            local_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-            if (local_desc.ViewDimension == D3D12_SRV_DIMENSION_TEXTURE2D) {
-                local_desc.Texture2D.MostDetailedMip = 0;
-                local_desc.Texture2D.MipLevels = rdesc.MipLevels;
-                local_desc.Texture2D.PlaneSlice = 0;
-                local_desc.Texture2D.ResourceMinLODClamp = 0.0f;
-            } else {
-                local_desc.Texture2DArray.MostDetailedMip = 0;
-                local_desc.Texture2DArray.MipLevels = rdesc.MipLevels;
-                local_desc.Texture2DArray.FirstArraySlice = 0;
-                local_desc.Texture2DArray.ArraySize = rdesc.DepthOrArraySize;
-                local_desc.Texture2DArray.PlaneSlice = 0;
-                local_desc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+            D3D12_RESOURCE_DESC rdesc = pResource->GetDesc();
+
+            // STRICT INTEGRITY GUARD:
+            // NEVER touch render targets, depth stencils, or unordered access views!
+            // SSAO (R8), Shadow Maps (R16/D32), Scene Depth, and Hi-Z pyramids MUST remain 100% native driver handled!
+            if (!(rdesc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+                                 D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
+                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)))
+            {
+                // Only touch static 2D / 2D-Array texture assets (particle atlases, masks, droplets)
+                if (rdesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+                    D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
+
+                    if (g_cfg.particle_fix == 1) {
+                        // Correct Opacity Mask Swizzle (5, 5, 5, 0):
+                        //   Src0 = 5 (FORCE_VALUE_1 -> R = 1.0)
+                        //   Src1 = 5 (FORCE_VALUE_1 -> G = 1.0)
+                        //   Src2 = 5 (FORCE_VALUE_1 -> B = 1.0)
+                        //   Src3 = 0 (FROM_MEMORY_COMPONENT_0 -> A = Memory[0])
+                        // Result:
+                        //   RGB = float3(1.0, 1.0, 1.0) -> Preserves 100% emitter vertex color (pure white smoke, golden sparks, clear droplets)
+                        //   A   = Memory[0] -> Provides true soft alpha transparency with edge gradient falloff
+                        //   Neutralizes "cubos magenta", "png de burbujas", and "manchas negras" simultaneously!
+                        desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(5, 5, 5, 0);
+                    } else if (g_cfg.particle_fix == 2) {
+                        // Monochromatic Swizzle (0, 0, 0, 0):
+                        desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
+                    }
+
+                    LONG count = InterlockedIncrement(&s_particle_fixes_applied);
+                    if (count <= 10) {
+                        log_msg("[PARTICLES] [FIX #%ld] Applied Particle Swizzle (%s) to BC4 %ux%u (Array=%u, Mips=%u).",
+                                count, (g_cfg.particle_fix == 1) ? "5,5,5,0" : "0,0,0,0",
+                                (UINT)rdesc.Width, rdesc.Height, rdesc.DepthOrArraySize, rdesc.MipLevels);
+                    }
+
+                    s_orig_csrv(This, pResource, &desc_copy, DestDescriptor);
+                    return;
+                }
             }
-            s_orig_csrv(This, pResource, &local_desc, DestDescriptor);
-            return;
         }
     }
 
-    // STRICT INTEGRITY: All multi-channel, color (BC7, RGBA), normal (BC5), and depth formats pass 100% native!
+    // STRICT INTEGRITY: All multi-channel, color (BC7, RGBA), normal (BC5), depth (R16/R32/D32),
+    // SSAO (R8), and null-desc calls pass 100% native!
     s_orig_csrv(This, pResource, pDesc, DestDescriptor);
 }
 
@@ -81,6 +86,11 @@ void particles_hook_install(ID3D12Device* pDevice) {
     if (s_installed) return;
     s_installed = true;
 
+    if (g_cfg.particle_fix == 0) {
+        log_msg("[PARTICLES] Particle swizzle fix is DISABLED by configuration.");
+        return;
+    }
+
     void** vtbl = *(void***)pDevice;
     if (!vtbl) return;
 
@@ -90,7 +100,7 @@ void particles_hook_install(ID3D12Device* pDevice) {
             s_orig_csrv = (PFN_CreateShaderResourceView)vtbl[18];
             vtbl[18] = (void*)Hook_CreateShaderResourceView;
             VirtualProtect(&vtbl[18], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[PARTICLES] Hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Swizzle Fix.");
+            log_msg("[PARTICLES] Hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Alpha Mask Swizzle Fix (Mode=%d).", g_cfg.particle_fix);
         } else {
             log_msg("[PARTICLES] [WARN] VirtualProtect failed on ID3D12Device::CreateShaderResourceView.");
         }
