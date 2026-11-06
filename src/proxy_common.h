@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.13.1"
+#define PROXY_VERSION "3.13.2"
 
 enum component_status
 {
@@ -80,7 +80,6 @@ extern proxy_telemetry g_tel;
 void log_msg(const char* fmt, ...);
 void open_log_and_config();
 void identify_game();
-void sanitize_particle_config();
 
 void vram_hook_install();
 void guard_install();

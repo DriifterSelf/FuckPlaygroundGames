@@ -150,7 +150,6 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
 
         open_log_and_config();
         identify_game();
-        sanitize_particle_config();
         guard_install();
         sched_governor_start();
 

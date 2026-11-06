@@ -51,26 +51,20 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
                 UINT64 usage = pVideoMemoryInfo->CurrentUsage;
                 UINT64 os_budget = pVideoMemoryInfo->Budget;
 
-                // CRITICAL FIX: NEVER report target_budget lower than OS Budget or Current Usage!
-                // We uncap the budget up to the physical dedicated VRAM limit, but never restrict below what Windows already allows.
+                // Base target budget is physical safe limit or OS budget, whichever is higher
                 UINT64 target_budget = (s_cached_max_safe_budget > os_budget)
                                      ? s_cached_max_safe_budget
                                      : os_budget;
 
-                // Under high VRAM pressure, provide a dynamic ceiling with at least 1 GB headroom above usage
-                if (usage + (1024ULL * 1024ULL * 1024ULL) > target_budget) {
-                    target_budget = usage + (1024ULL * 1024ULL * 1024ULL);
-                }
-
-                // CRITICAL SAFETY CEILING:
-                // Never report more VRAM than physically exists minus 512 MB OS reserve!
-                // If target_budget exceeds physical VRAM, the engine over-allocates textures and triggers
-                // 0x8007000E (E_OUTOFMEMORY) in AMD's kernel allocator.
-                UINT64 hard_ceiling = (s_cached_dedicated > (512ULL * 1024ULL * 1024ULL))
-                                    ? (s_cached_dedicated - (512ULL * 1024ULL * 1024ULL))
-                                    : s_cached_dedicated;
-                if (target_budget > hard_ceiling) {
-                    target_budget = hard_ceiling;
+                // CRITICAL HEADROOM & OOM PREVENTION:
+                // Maintain at least 512 MB headroom above current usage at all times!
+                // ABSOLUTE INTEGRITY RULE: Never allow target_budget < usage!
+                // Clamping target_budget below CurrentUsage causes DXGI QueryVideoMemoryInfo
+                // to report over-budget, which immediately triggers ForzaTech's internal
+                // fail-fast assert 0x8007000E (E_OUTOFMEMORY) when VRAM usage is high.
+                const UINT64 min_headroom = 512ULL * 1024ULL * 1024ULL;
+                if (target_budget < usage + min_headroom) {
+                    target_budget = usage + min_headroom;
                 }
 
                 pVideoMemoryInfo->Budget = target_budget;

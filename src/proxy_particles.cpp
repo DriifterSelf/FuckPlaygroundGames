@@ -1,7 +1,7 @@
 // Direct3D 12 Particle SRV Swizzle Hook
-// Eliminates neon red, yellow, and magenta color corruption on single-channel BC4 textures
-// Restores soft depth particle fading by providing neutral white luminance (1,1,1) & alpha (R)
-// Eliminates "cubos magenta", "png de burbujas", and "manchas negras"
+// Eliminates neon magenta cubes, pink chromatic tint, and opaque billboard quads on BC4 textures
+// Restores soft depth particle fading by providing unified neutral luminance & alpha (Data, Data, Data, Data)
+// SSAO (R8) and Shadow Maps (R16) remain 100% native driver handled (zero black smudges)
 #include <d3d12.h>
 #include <stdio.h>
 #include "proxy_common.h"
@@ -40,31 +40,31 @@ static void STDMETHODCALLTYPE Hook_CreateShaderResourceView(
                                  D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)))
             {
-                // Only touch static 2D / 2D-Array texture assets (particle atlases, masks, droplets)
+                // Only touch static 2D texture assets (particle atlases, masks, droplets)
                 if (rdesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
                     D3D12_SHADER_RESOURCE_VIEW_DESC desc_copy = *pDesc;
 
-                    if (g_cfg.particle_fix == 1) {
-                        // Correct Opacity Mask Swizzle (5, 5, 5, 0):
-                        //   Src0 = 5 (FORCE_VALUE_1 -> R = 1.0)
-                        //   Src1 = 5 (FORCE_VALUE_1 -> G = 1.0)
-                        //   Src2 = 5 (FORCE_VALUE_1 -> B = 1.0)
-                        //   Src3 = 0 (FROM_MEMORY_COMPONENT_0 -> A = Memory[0])
-                        // Result:
-                        //   RGB = float3(1.0, 1.0, 1.0) -> Preserves 100% emitter vertex color (pure white smoke, golden sparks, clear droplets)
-                        //   A   = Memory[0] -> Provides true soft alpha transparency with edge gradient falloff
-                        //   Neutralizes "cubos magenta", "png de burbujas", and "manchas negras" simultaneously!
-                        desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(5, 5, 5, 0);
-                    } else if (g_cfg.particle_fix == 2) {
-                        // Monochromatic Swizzle (0, 0, 0, 0):
-                        desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
-                    }
+                    // Neutral Monochromatic Swizzle (0, 0, 0, 0):
+                    //   Src0 = 0 (FROM_MEMORY_COMPONENT_0 -> R = Data)
+                    //   Src1 = 0 (FROM_MEMORY_COMPONENT_0 -> G = Data)
+                    //   Src2 = 0 (FROM_MEMORY_COMPONENT_0 -> B = Data)
+                    //   Src3 = 0 (FROM_MEMORY_COMPONENT_0 -> A = Data)
+                    //
+                    // Visual Truth & Validation (via DXIL disassembly):
+                    // 1. 6point_alphafade particle lighting:
+                    //    - Component 0 provides smooth opacity/alpha falloff (eliminates solid square bounding boxes).
+                    //    - Components 1 & 2 provide neutral isotropic directional lighting vectors (eliminates pink / magenta tint).
+                    // 2. Simple particle shaders (fxp_tst_shared_simple_shader):
+                    //    - tex.rgb = (Data, Data, Data) multiplies emitter vertex tint cleanly (white smoke, golden sparks, clear droplets).
+                    //    - tex.a = Data provides true soft alpha blending (no opaque bounding boxes).
+                    // 3. SSAO & Shadows integrity:
+                    //    - R8 (SSAO) and R16 (Shadow Maps / Scene Depth) are 100% untouched (eliminates black smudges / "manchas negras").
+                    desc_copy.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0, 0, 0, 0);
 
                     LONG count = InterlockedIncrement(&s_particle_fixes_applied);
                     if (count <= 10) {
-                        log_msg("[PARTICLES] [FIX #%ld] Applied Particle Swizzle (%s) to BC4 %ux%u (Array=%u, Mips=%u).",
-                                count, (g_cfg.particle_fix == 1) ? "5,5,5,0" : "0,0,0,0",
-                                (UINT)rdesc.Width, rdesc.Height, rdesc.DepthOrArraySize, rdesc.MipLevels);
+                        log_msg("[PARTICLES] [FIX #%ld] Applied Monochromatic Swizzle (0,0,0,0) to BC4 %ux%u (Array=%u, Mips=%u).",
+                                count, (UINT)rdesc.Width, rdesc.Height, rdesc.DepthOrArraySize, rdesc.MipLevels);
                     }
 
                     s_orig_csrv(This, pResource, &desc_copy, DestDescriptor);
@@ -100,7 +100,7 @@ void particles_hook_install(ID3D12Device* pDevice) {
             s_orig_csrv = (PFN_CreateShaderResourceView)vtbl[18];
             vtbl[18] = (void*)Hook_CreateShaderResourceView;
             VirtualProtect(&vtbl[18], sizeof(void*), oldProtect, &oldProtect);
-            log_msg("[PARTICLES] Hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Particle Alpha Mask Swizzle Fix (Mode=%d).", g_cfg.particle_fix);
+            log_msg("[PARTICLES] Hooked ID3D12Device::CreateShaderResourceView (vtbl[18]) for Neutral Swizzle Fix (0,0,0,0).");
         } else {
             log_msg("[PARTICLES] [WARN] VirtualProtect failed on ID3D12Device::CreateShaderResourceView.");
         }
