@@ -209,9 +209,33 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                     }
                 }
 
-                // CASE 2: Secondary NULL/Invalid Memory Read after Assert or Allocation Failure
-                // Rescues read faults from NULL pointers ([0x0] to [0x10000]) or poison pointers (0xCC...)
+                // CASE 2: Invalid Array Index Dereference (rax == 0xFFFFFFFF / -1 slot at RVA 0x1E86A40)
+                // In ForzaTech particle/audio telemetry emitter update, an unassigned slot returns -1.
+                // The engine attempts to compute [r8 + rax*4 + 94h] and [r9 + rax*4 + ACh], which wraps to
+                // +16 GB into unmapped memory. Advancing RIP by +0x22 (34 bytes) safely skips this dead slot
+                // computation and resumes at 0x1E86A62 (mov eax, dword ptr [r8+484h]).
+                if (rva == 0x01E86A40 ||
+                    (rip[0] == 0xF3 && rip[1] == 0x41 && rip[2] == 0x0F && rip[3] == 0x10 && rip[4] == 0x84 && rip[5] == 0x80))
+                {
+                    LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                    InterlockedIncrement(&g_tel.guard_suppressed);
+                    log_msg("[GUARD] Rescued unmapped -1 slot dereference #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, FaultAddr=0x%llX). Advancing +0x22 to next field.",
+                            hit, rip, rva, pInfo->ContextRecord->Rax, faultAddr);
+                    pInfo->ContextRecord->Rip += 0x22;
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+
+                // CASE 3: Secondary NULL/Invalid Memory Read after Assert or Allocation Failure
+                // Rescues read faults from NULL pointers ([0x0] to [0x10000]), poison pointers (0xCC...),
+                // or uncommitted/unmapped virtual addresses verified via VirtualQuery.
                 bool is_bad_addr = (faultAddr < 0x10000 || faultAddr >= 0x7FFF000000000000ULL || (faultAddr & 0xFFFF000000000000ULL) == 0xCCCC000000000000ULL);
+                if (!is_bad_addr) {
+                    MEMORY_BASIC_INFORMATION mbi = {};
+                    if (VirtualQuery((LPCVOID)faultAddr, &mbi, sizeof(mbi)) == 0 || mbi.State != MEM_COMMIT) {
+                        is_bad_addr = true;
+                    }
+                }
+
                 if (isWrite == 0 && is_bad_addr) {
                     if (RescueMemoryReadFault(pInfo, faultAddr)) {
                         LONG hit = InterlockedIncrement(&g_tel.guard_hits);
@@ -276,6 +300,12 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
             __except (EXCEPTION_EXECUTE_HANDLER) {
             }
         }
+        uintptr_t unh_rva = ((uintptr_t)rip >= g_tel.exe_base && (uintptr_t)rip < g_tel.exe_end) ? ((uintptr_t)rip - g_tel.exe_base) : 0;
+        log_msg("[GUARD] [UNHANDLED] Access Violation at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Write=%lu, Opcode=%02X %02X %02X %02X %02X %02X %02X %02X, RAX=0x%llX).",
+                rip, unh_rva, faultAddr, isWrite,
+                rip[0], rip[1], rip[2], rip[3], rip[4], rip[5], rip[6], rip[7],
+                pInfo->ContextRecord->Rax);
+        InterlockedIncrement(&g_tel.guard_passed);
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
