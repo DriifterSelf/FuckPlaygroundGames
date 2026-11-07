@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.13.2"
+#define PROXY_VERSION "3.13.3"
 
 enum component_status
 {

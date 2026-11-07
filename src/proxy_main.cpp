@@ -132,7 +132,7 @@ extern "C" __declspec(dllexport) int agsDriverExtensionsDX12_CreateDevice(
         }
         uint32_t* pExt = (uint32_t*)((uint8_t*)returnedParams + sizeof(void*));
         g_tel.ext_bits = *pExt;
-        log_msg("[AGS] Native AMD Driver Extensions: 0x%08X (Particle Swizzle Fix Active)", g_tel.ext_bits);
+        log_msg("[AGS] Native AMD Driver Extensions: 0x%08X (Particle Stability Fix Active)", g_tel.ext_bits);
     } else {
         log_msg("[AGS] agsDriverExtensionsDX12_CreateDevice failed with code %d", res);
     }
