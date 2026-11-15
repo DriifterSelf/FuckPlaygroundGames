@@ -70,13 +70,16 @@ static bool RescueMemoryReadFault(PEXCEPTION_POINTERS pInfo, uintptr_t faultAddr
 
         bool isLoad = false;
         bool isCmp = false;
+        bool isIndirectCall = false;
         if (!isTwoByte) {
             if (opcode == 0x8B || opcode == 0x8A) {
                 isLoad = true;
             } else if (opcode >= 0x38 && opcode <= 0x3B) {
                 isCmp = true;
-            } else if (opcode == 0x85) {
+            } else if (opcode == 0x85 || opcode == 0x80 || opcode == 0x81 || opcode == 0x83) {
                 isCmp = true;
+            } else if (opcode == 0xFF) {
+                isIndirectCall = true;
             }
         } else {
             if (opcode == 0xB6 || opcode == 0xB7 || opcode == 0xBE || opcode == 0xBF) {
@@ -86,7 +89,7 @@ static bool RescueMemoryReadFault(PEXCEPTION_POINTERS pInfo, uintptr_t faultAddr
             }
         }
 
-        if (!isLoad && !isCmp) {
+        if (!isLoad && !isCmp && !isIndirectCall) {
             return false;
         }
 
@@ -96,6 +99,11 @@ static bool RescueMemoryReadFault(PEXCEPTION_POINTERS pInfo, uintptr_t faultAddr
         uint8_t rm  = modrm & 7;
 
         if (mod == 3) {
+            return false;
+        }
+
+        // For 0xFF (Group 5), rescue indirect CALL r/m64 (reg == 2, e.g. FF 50 28 at RVA 0x27721A6)
+        if (isIndirectCall && reg != 2) {
             return false;
         }
 
@@ -157,6 +165,10 @@ static bool RescueMemoryReadFault(PEXCEPTION_POINTERS pInfo, uintptr_t faultAddr
             }
         }
 
+        if (isIndirectCall) {
+            pInfo->ContextRecord->Rax = 0;
+        }
+
         pInfo->ContextRecord->Rip += instrLen;
         return true;
     }
@@ -193,19 +205,25 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                         DWORD64 rax = pInfo->ContextRecord->Rax;
                         DWORD64 rbx = pInfo->ContextRecord->Rbx;
 
+                        // RVA 0x48CF855 is ForzaTech's unrecoverable GPU TDR / DXGI_ERROR_DEVICE_REMOVED handler
+                        // (called after ID3D12Device::GetDeviceRemovedReason when the display driver resets).
+                        // Suppressing it leaves the D3D12 device dead and the window hung with background audio.
+                        if (rva == 0x048CF855) {
+                            log_msg("[GUARD] [FATAL] Unrecoverable GPU Device Removed (DXGI_ERROR_DEVICE_REMOVED / Driver TDR) at RIP=%p (RVA=0x%llX). Terminating cleanly to prevent zombie hang with background audio.",
+                                    rip, rva);
+                            TerminateProcess(GetCurrentProcess(), 0x887A0005);
+                            return EXCEPTION_CONTINUE_SEARCH;
+                        }
+
                         LONG hit = InterlockedIncrement(&g_tel.guard_hits);
+                        InterlockedIncrement(&g_tel.guard_suppressed);
 
                         if (hit <= (LONG)g_cfg.oom_guard_max) {
-                            InterlockedIncrement(&g_tel.guard_suppressed);
                             log_msg("[GUARD] Suppressed fail-fast NULL-write assertion #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, RBX=0x%llX). Advancing past assert.",
                                     hit, rip, rva, rax, rbx);
-                            pInfo->ContextRecord->Rip += 11;
-                            return EXCEPTION_CONTINUE_EXECUTION;
-                        } else {
-                            InterlockedIncrement(&g_tel.guard_passed);
-                            log_msg("[GUARD] [LIMIT] Exceeded maximum allowed suppressions (%d). Letting exception pass.",
-                                    g_cfg.oom_guard_max);
                         }
+                        pInfo->ContextRecord->Rip += 11;
+                        return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }
 
@@ -219,8 +237,10 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                 {
                     LONG hit = InterlockedIncrement(&g_tel.guard_hits);
                     InterlockedIncrement(&g_tel.guard_suppressed);
-                    log_msg("[GUARD] Rescued unmapped -1 slot dereference #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, FaultAddr=0x%llX). Advancing +0x22 to next field.",
-                            hit, rip, rva, pInfo->ContextRecord->Rax, faultAddr);
+                    if (hit <= (LONG)g_cfg.oom_guard_max) {
+                        log_msg("[GUARD] Rescued unmapped -1 slot dereference #%ld at RIP=%p (RVA=0x%llX, RAX=0x%llX, FaultAddr=0x%llX). Advancing +0x22 to next field.",
+                                hit, rip, rva, pInfo->ContextRecord->Rax, faultAddr);
+                    }
                     pInfo->ContextRecord->Rip += 0x22;
                     return EXCEPTION_CONTINUE_EXECUTION;
                 }
@@ -240,8 +260,10 @@ static LONG WINAPI DynamicCrashGuard(PEXCEPTION_POINTERS pInfo) {
                     if (RescueMemoryReadFault(pInfo, faultAddr)) {
                         LONG hit = InterlockedIncrement(&g_tel.guard_hits);
                         InterlockedIncrement(&g_tel.guard_suppressed);
-                        log_msg("[GUARD] Rescued invalid memory read #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Opcode=%02X %02X %02X %02X). Resuming next instruction.",
-                                hit, rip, rva, faultAddr, rip[0], rip[1], rip[2], rip[3]);
+                        if (hit <= (LONG)g_cfg.oom_guard_max) {
+                            log_msg("[GUARD] Rescued invalid memory read #%ld at RIP=%p (RVA=0x%llX, FaultAddr=0x%llX, Opcode=%02X %02X %02X %02X). Resuming next instruction.",
+                                    hit, rip, rva, faultAddr, rip[0], rip[1], rip[2], rip[3]);
+                        }
                         return EXCEPTION_CONTINUE_EXECUTION;
                     }
                 }

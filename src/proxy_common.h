@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#define PROXY_VERSION "3.13.4"
+#define PROXY_VERSION "3.13.6"
 
 enum component_status
 {
@@ -21,7 +21,6 @@ struct proxy_config
     int oom_guard;
     int oom_guard_max;
     int hybrid_governor;
-    int particle_fix;
 };
 
 struct proxy_telemetry
@@ -84,5 +83,3 @@ void identify_game();
 void vram_hook_install();
 void guard_install();
 void sched_governor_start();
-struct ID3D12Device;
-void particles_hook_install(struct ID3D12Device* pDevice);

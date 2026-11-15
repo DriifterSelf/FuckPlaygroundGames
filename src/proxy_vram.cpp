@@ -51,21 +51,10 @@ static HRESULT STDMETHODCALLTYPE Hook_QueryVideoMemoryInfo(
                 UINT64 usage = pVideoMemoryInfo->CurrentUsage;
                 UINT64 os_budget = pVideoMemoryInfo->Budget;
 
-                // Base target budget is physical safe limit or OS budget, whichever is higher
-                UINT64 target_budget = (s_cached_max_safe_budget > os_budget)
-                                     ? s_cached_max_safe_budget
-                                     : os_budget;
-
-                // CRITICAL HEADROOM & OOM PREVENTION:
-                // Maintain at least 512 MB headroom above current usage at all times!
-                // ABSOLUTE INTEGRITY RULE: Never allow target_budget < usage!
-                // Clamping target_budget below CurrentUsage causes DXGI QueryVideoMemoryInfo
-                // to report over-budget, which immediately triggers ForzaTech's internal
-                // fail-fast assert 0x8007000E (E_OUTOFMEMORY) when VRAM usage is high.
-                const UINT64 min_headroom = 512ULL * 1024ULL * 1024ULL;
-                if (target_budget < usage + min_headroom) {
-                    target_budget = usage + min_headroom;
-                }
+                // Enforce the configured safety margin (s_cached_max_safe_budget, e.g. 92% = ~14,895 MB on 16 GB)
+                // so ForzaTech's streaming system begins evicting stale textures/particles before physical VRAM
+                // saturates and triggers a WDDM driver TDR (LiveKernelEvent 141 / DXGI_ERROR_DEVICE_REMOVED).
+                UINT64 target_budget = s_cached_max_safe_budget;
 
                 pVideoMemoryInfo->Budget = target_budget;
                 g_tel.reported_budget_bytes = target_budget;
